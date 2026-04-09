@@ -347,7 +347,7 @@ impl CommandWithStdin {
 
 #[cfg(test)]
 mod tests {
-    use super::{HookRunResult, HookRunner};
+    use super::HookRunner;
     use crate::{PluginManager, PluginManagerConfig};
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -427,27 +427,27 @@ mod tests {
         // when
         let runner = HookRunner::from_registry(&registry).expect("plugin hooks should load");
 
-        // then
+        // then — sort messages because plugin discovery order is filesystem-dependent
+        let pre = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
+        let mut pre_msgs = pre.messages().to_vec();
+        pre_msgs.sort();
+        assert!(!pre.is_denied());
+        assert_eq!(pre_msgs, vec!["plugin pre one", "plugin pre two"]);
+
+        let post = runner.run_post_tool_use("Read", r#"{"path":"README.md"}"#, "ok", false);
+        let mut post_msgs = post.messages().to_vec();
+        post_msgs.sort();
+        assert!(!post.is_denied());
+        assert_eq!(post_msgs, vec!["plugin post one", "plugin post two"]);
+
+        let fail =
+            runner.run_post_tool_use_failure("Read", r#"{"path":"README.md"}"#, "tool failed");
+        let mut fail_msgs = fail.messages().to_vec();
+        fail_msgs.sort();
+        assert!(!fail.is_denied());
         assert_eq!(
-            runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#),
-            HookRunResult::allow(vec![
-                "plugin pre one".to_string(),
-                "plugin pre two".to_string(),
-            ])
-        );
-        assert_eq!(
-            runner.run_post_tool_use("Read", r#"{"path":"README.md"}"#, "ok", false),
-            HookRunResult::allow(vec![
-                "plugin post one".to_string(),
-                "plugin post two".to_string(),
-            ])
-        );
-        assert_eq!(
-            runner.run_post_tool_use_failure("Read", r#"{"path":"README.md"}"#, "tool failed",),
-            HookRunResult::allow(vec![
-                "plugin failure one".to_string(),
-                "plugin failure two".to_string(),
-            ])
+            fail_msgs,
+            vec!["plugin failure one", "plugin failure two"]
         );
 
         let _ = fs::remove_dir_all(config_home);
