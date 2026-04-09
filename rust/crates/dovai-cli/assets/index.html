@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>dovai — Settings</title>
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+</head>
+<body>
+  <header class="hero">
+    <img src="/logo-full.png" class="logo" alt="dovai" />
+    <div class="hero-text">
+      <h1>Settings</h1>
+      <p>Configure your AI business manager</p>
+    </div>
+    <div class="hero-status">
+      <span class="status-dot" id="workspace-dot"></span>
+      <span id="workspace-label">Loading…</span>
+    </div>
+  </header>
+
+  <nav class="tab-bar" id="tab-bar">
+    <button class="tab active" data-page="settings">Settings</button>
+    <button class="tab" data-page="tasks">Tasks</button>
+    <button class="tab" data-page="processes">Processes</button>
+  </nav>
+
+  <!-- First-run setup banner (shown when ?firstrun=1) -->
+  <div id="firstrun-banner" class="firstrun-banner" hidden>
+    <div class="firstrun-inner">
+      <h2>Welcome to Dovai</h2>
+      <p>To get started, enter at least one AI provider API key below and click <strong>Save all settings</strong>.</p>
+      <p class="firstrun-hint">Your terminal is waiting &mdash; it will start automatically once you save.</p>
+    </div>
+  </div>
+
+  <!-- ==================== SETTINGS PAGE ==================== -->
+  <main id="page-settings">
+    <section class="card" id="usage-card">
+      <div class="card-header">
+        <div>
+          <h2>Token usage</h2>
+          <p class="card-sub">Consumption across your dovai sessions</p>
+        </div>
+      </div>
+
+      <div class="usage-periods" id="usage-periods"></div>
+
+      <h3 class="usage-section-title">Per provider</h3>
+      <div id="usage-providers" class="usage-providers"></div>
+
+      <h3 class="usage-section-title">All-time totals</h3>
+      <div class="usage-grid">
+        <div class="usage-item">
+          <span class="usage-label">Total tokens</span>
+          <span class="usage-value" id="total-tokens">—</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">Input</span>
+          <span class="usage-value" id="input-tokens">—</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">Output</span>
+          <span class="usage-value" id="output-tokens">—</span>
+        </div>
+        <div class="usage-item usage-item-cost">
+          <span class="usage-label">Estimated cost</span>
+          <span class="usage-value" id="est-cost">—</span>
+        </div>
+      </div>
+      <p class="usage-note">
+        Across <span id="usage-sessions">—</span> session(s).
+        Costs are estimates based on published API pricing. Cache reads reduce real cost.
+      </p>
+    </section>
+
+    <!-- ============ API Providers ============ -->
+    <section class="card" id="providers-card">
+      <div class="card-header">
+        <div>
+          <h2>API providers</h2>
+          <p class="card-sub">Enter your API keys once — all models from that provider become available</p>
+        </div>
+      </div>
+      <div class="field">
+        <label for="prov-anthropic-key">Anthropic</label>
+        <div class="input-with-reveal">
+          <input type="password" id="prov-anthropic-key" placeholder="sk-ant-..." autocomplete="off" />
+          <button type="button" class="reveal">Show</button>
+        </div>
+        <p class="help">Claude models — console.anthropic.com &rarr; API Keys</p>
+      </div>
+      <div class="field">
+        <label for="prov-xai-key">xAI</label>
+        <div class="input-with-reveal">
+          <input type="password" id="prov-xai-key" placeholder="xai-..." autocomplete="off" />
+          <button type="button" class="reveal">Show</button>
+        </div>
+        <p class="help">Grok models</p>
+      </div>
+      <div class="field">
+        <label for="prov-openai-key">OpenAI</label>
+        <div class="input-with-reveal">
+          <input type="password" id="prov-openai-key" placeholder="sk-..." autocomplete="off" />
+          <button type="button" class="reveal">Show</button>
+        </div>
+        <p class="help">GPT and o-series models</p>
+      </div>
+      <div class="field">
+        <label for="prov-local-endpoint">Local (OpenAI-compatible)</label>
+        <input type="text" id="prov-local-endpoint" placeholder="http://127.0.0.1:1234" autocomplete="off" />
+        <p class="help">LM Studio, Ollama, or any OpenAI-compatible local server</p>
+      </div>
+    </section>
+
+    <!-- ============ Task Routing ============ -->
+    <section class="card" id="routing-card">
+      <div class="card-header">
+        <div>
+          <h2>Task routing</h2>
+          <p class="card-sub">Name your agents and choose which model powers each one</p>
+        </div>
+      </div>
+      <div class="field">
+        <label for="route-pm">PM (Coordinator)</label>
+        <p class="help">Orchestrates multi-model tasks. When you mention more than one agent by name, the PM reads your message, delegates work to the right agents, and delivers the final result. Use your cheapest/fastest model here.</p>
+        <input type="text" id="route-pm-name" placeholder="e.g. Coordinator" />
+        <div class="model-row">
+          <select id="route-pm"></select>
+          <button type="button" class="btn-fetch-routing-models">Fetch models</button>
+        </div>
+        <p class="help route-model-status"></p>
+      </div>
+      <div class="field">
+        <label for="route-simple">Direct tasks</label>
+        <p class="help">Default model when you don't address anyone by name</p>
+        <input type="text" id="route-simple-name" placeholder="e.g. Assistant" />
+        <div class="model-row">
+          <select id="route-simple"></select>
+          <button type="button" class="btn-fetch-routing-models">Fetch models</button>
+        </div>
+        <p class="help route-model-status"></p>
+      </div>
+      <div class="field">
+        <label for="route-complex">Complex tasks</label>
+        <p class="help">Heavyweight analysis, professional writing — addressed by name</p>
+        <input type="text" id="route-complex-name" placeholder="e.g. Research Agent" />
+        <div class="model-row">
+          <select id="route-complex"></select>
+          <button type="button" class="btn-fetch-routing-models">Fetch models</button>
+        </div>
+        <p class="help route-model-status"></p>
+      </div>
+      <div class="field">
+        <label for="route-clerk">Filing clerk</label>
+        <p class="help">Document compilation, vault maintenance (background)</p>
+        <input type="text" id="route-clerk-name" placeholder="e.g. Filing Clerk" />
+        <div class="model-row">
+          <select id="route-clerk"></select>
+          <button type="button" class="btn-fetch-routing-models">Fetch models</button>
+        </div>
+        <p class="help route-model-status"></p>
+      </div>
+
+      <div class="warning" id="clerk-warning">
+        <div class="warning-title">
+          <span class="warning-icon">!</span>
+          <span>Clerk runs continuously in the background</span>
+        </div>
+        <p>
+          The clerk calls an LLM for <em>every</em> document in your workspace and keeps
+          watching for new files. With cloud providers this can consume tokens
+          rapidly — especially the first time it ingests a large workspace.
+        </p>
+        <p class="warning-rec">
+          <strong>Recommended:</strong> use a <strong>local model</strong> (LM Studio, Ollama)
+          or a <strong>cheap/fast one</strong> (Claude Haiku, GPT-4o mini). Avoid pointing this
+          at Opus-tier models unless you're comfortable with the spend.
+        </p>
+      </div>
+    </section>
+
+    <section class="card" id="identity-card" hidden>
+      <div class="card-header">
+        <div>
+          <h2>Agent identity</h2>
+          <p class="card-sub">Who your AI manager is in this workspace</p>
+        </div>
+      </div>
+      <div class="field">
+        <label for="agent-name">Display name</label>
+        <input type="text" id="agent-name" disabled />
+        <p class="help">To rename your agent use <span class="code">/rename New Name</span> in the terminal.</p>
+      </div>
+      <div class="field">
+        <label for="agent-email">Agent email</label>
+        <input type="email" id="agent-email" placeholder="agent@example.com" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="owner-name">Owner name</label>
+        <input type="text" id="owner-name" placeholder="Your name" />
+      </div>
+    </section>
+
+    <section class="card" id="owner-card" hidden>
+      <div class="card-header">
+        <div>
+          <h2>Owner profile</h2>
+          <p class="card-sub">Information your agent should know about you</p>
+        </div>
+      </div>
+      <p class="card-note">
+        Your agent reads this profile to find your contact details, preferences, and background.
+        Write anything here — email, phone, address, profession, family, likes, dislikes, etc.
+      </p>
+      <div class="field">
+        <textarea id="owner-profile" rows="12" placeholder="Name: Jane Doe&#10;Email: jane@example.com&#10;Phone: +1 555-1234&#10;Address: 123 Main St, Anytown&#10;Profession: Property manager&#10;&#10;Preferences:&#10;- Prefer email over phone&#10;- Available Mon-Fri 8am-5pm"></textarea>
+      </div>
+    </section>
+
+    <section class="card" id="services-card" hidden>
+      <div class="card-header">
+        <div>
+          <h2>Background services</h2>
+          <p class="card-sub">Scheduler, email, telegram, and worker daemons</p>
+        </div>
+        <button type="button" id="btn-restart-all" class="btn-secondary">Restart all</button>
+      </div>
+      <div id="services-status" class="services-status" hidden></div>
+      <div id="services-list" class="services-list">
+        <p class="muted">Loading…</p>
+      </div>
+    </section>
+
+    <section class="card help-card">
+      <div class="card-header">
+        <div>
+          <h2>Help</h2>
+          <p class="card-sub">Quick answers to common questions</p>
+        </div>
+      </div>
+      <ul class="help-list">
+        <li>
+          <strong>Finding your Anthropic key</strong>
+          <span>console.anthropic.com → Settings → API Keys</span>
+        </li>
+        <li>
+          <strong>Installing LM Studio (free, local)</strong>
+          <span>Download from lmstudio.ai — runs models on your own machine, no API costs</span>
+        </li>
+        <li>
+          <strong>Clerk is burning tokens?</strong>
+          <span>Check <span class="code">.dovai/data/filing-clerk.log</span> to see what it's doing</span>
+        </li>
+        <li>
+          <strong>Settings take effect when</strong>
+          <span>After saving, restart dovai and any running daemons (filing clerk) to apply changes</span>
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- ==================== TASKS PAGE ==================== -->
+  <main id="page-tasks" hidden>
+    <section class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <h2>Tasks</h2>
+          <p class="card-sub">All tasks, events, reminders, and scheduled wakes</p>
+        </div>
+        <button type="button" class="btn-primary btn-sm" id="btn-new-task">+ New task</button>
+      </div>
+
+      <div class="filter-bar" id="task-filters">
+        <select id="filter-status">
+          <option value="">All statuses</option>
+          <option value="pending" selected>Pending</option>
+          <option value="in_progress">In progress</option>
+          <option value="claimed">Claimed</option>
+          <option value="waiting_approval">Waiting approval</option>
+          <option value="done">Done</option>
+          <option value="skipped">Skipped</option>
+          <option value="failed">Failed</option>
+        </select>
+        <select id="filter-type">
+          <option value="">All types</option>
+          <option value="task">Task</option>
+          <option value="sop_step">SOP step</option>
+          <option value="event">Event</option>
+          <option value="reminder">Reminder</option>
+          <option value="wake">Wake</option>
+          <option value="follow_up">Follow-up</option>
+        </select>
+        <select id="filter-assigned">
+          <option value="">All assignees</option>
+          <option value="agent">Agent</option>
+          <option value="owner">Owner</option>
+        </select>
+      </div>
+
+      <div id="task-list" class="task-list"></div>
+    </section>
+
+    <!-- Task edit form (inline) -->
+    <section class="card" id="task-form" hidden>
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 id="task-modal-title">New task</h2>
+        <button type="button" class="btn-secondary btn-sm" id="task-modal-cancel">Back to list</button>
+      </div>
+      <input type="hidden" id="task-edit-id" />
+      <div class="field">
+        <label for="task-title">Title</label>
+        <input type="text" id="task-title" placeholder="What needs to be done?" />
+      </div>
+      <div class="field">
+        <label for="task-description">Description</label>
+        <textarea id="task-description" rows="3" placeholder="Optional details..."></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="task-type">Type</label>
+          <select id="task-type">
+            <option value="task">Task</option>
+            <option value="event">Event</option>
+            <option value="reminder">Reminder</option>
+            <option value="wake">Wake</option>
+            <option value="follow_up">Follow-up</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="task-priority">Priority</label>
+          <select id="task-priority">
+            <option value="low">Low</option>
+            <option value="normal" selected>Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="task-due">Due date/time</label>
+          <input type="datetime-local" id="task-due" />
+        </div>
+        <div class="field">
+          <label for="task-assigned">Assigned to</label>
+          <input type="text" id="task-assigned" value="agent" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="task-status-edit">Status</label>
+        <select id="task-status-edit">
+          <option value="pending">Pending</option>
+          <option value="in_progress">In progress</option>
+          <option value="claimed">Claimed</option>
+          <option value="waiting_approval">Waiting approval</option>
+          <option value="done">Done</option>
+          <option value="skipped">Skipped</option>
+          <option value="failed">Failed</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="task-notes">Output notes</label>
+        <textarea id="task-notes" rows="2" placeholder="Notes from execution..."></textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button type="button" class="btn-secondary" id="task-modal-close">Cancel</button>
+        <button type="button" class="btn-primary" id="task-modal-save">Save</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- ==================== PROCESSES PAGE ==================== -->
+  <main id="page-processes" hidden>
+    <!-- Process list view -->
+    <section class="card" id="process-list-view">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <h2>Process library</h2>
+          <p class="card-sub">Standard operating procedures for your agent</p>
+        </div>
+        <button type="button" class="btn-primary btn-sm" id="btn-new-process">+ New process</button>
+      </div>
+      <div id="process-list" class="process-list"></div>
+    </section>
+
+    <!-- Process editor view (hidden until a process is selected) -->
+    <section class="card" id="process-editor" hidden>
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <h2 id="proc-editor-title">Edit process</h2>
+          <p class="card-sub" id="proc-editor-sub"></p>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn-secondary btn-sm" id="btn-back-to-list">Back</button>
+          <button type="button" class="btn-primary btn-sm" id="btn-activate-process">Activate</button>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="proc-name">Name</label>
+          <input type="text" id="proc-name" />
+        </div>
+        <div class="field">
+          <label for="proc-category">Category</label>
+          <input type="text" id="proc-category" placeholder="e.g. governance, financial" />
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="proc-trigger">Trigger type</label>
+          <select id="proc-trigger">
+            <option value="manual">Manual</option>
+            <option value="date_relative">Date relative</option>
+            <option value="recurring">Recurring</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="proc-description">Description</label>
+          <input type="text" id="proc-description" placeholder="Brief description" />
+        </div>
+      </div>
+      <button type="button" class="btn-primary btn-sm" id="btn-save-process" style="margin-bottom:16px;">Save process details</button>
+
+      <h3 class="usage-section-title">Steps</h3>
+      <p class="help" style="margin-bottom:12px;">Drag to reorder. Click to edit.</p>
+      <div id="step-list" class="step-list"></div>
+      <button type="button" class="btn-secondary" id="btn-add-step" style="margin-top:8px;">+ Add step</button>
+
+      <h3 class="usage-section-title" style="margin-top:20px;">Feedback</h3>
+      <div id="feedback-list" class="feedback-list"></div>
+      <div class="field" style="margin-top:8px;">
+        <div class="field-row">
+          <select id="feedback-step-select" style="max-width:200px;">
+            <option value="">General</option>
+          </select>
+          <input type="text" id="feedback-text" placeholder="Add feedback..." style="flex:1;" />
+          <button type="button" class="btn-primary btn-sm" id="btn-add-feedback">Add</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step edit form (inline) -->
+    <section class="card" id="step-form" hidden>
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 id="step-modal-title">Edit step</h2>
+        <button type="button" class="btn-secondary btn-sm" id="step-modal-cancel">Cancel</button>
+      </div>
+      <input type="hidden" id="step-edit-id" />
+      <div class="field">
+        <label for="step-title">Title</label>
+        <input type="text" id="step-title" />
+      </div>
+      <div class="field">
+        <label for="step-description">Instructions</label>
+        <textarea id="step-description" rows="4" placeholder="What should the agent do?"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="step-offset">Offset days</label>
+          <input type="number" id="step-offset" placeholder="e.g. -31" />
+          <p class="help">Negative = before reference date</p>
+        </div>
+        <div class="field">
+          <label for="step-assigned">Assigned to</label>
+          <input type="text" id="step-assigned" value="agent" />
+        </div>
+      </div>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="step-approval" /> Needs approval before continuing
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button type="button" class="btn-secondary" id="step-modal-close">Cancel</button>
+        <button type="button" class="btn-primary" id="step-modal-save">Save step</button>
+      </div>
+    </section>
+
+    <!-- Activate form (inline) -->
+    <section class="card" id="activate-form" hidden>
+      <div class="card-header">
+        <div>
+          <h2>Activate process</h2>
+          <p class="card-sub">Set the reference date. Step due dates will be computed from this date using each step's offset.</p>
+        </div>
+      </div>
+      <div class="field">
+        <label for="activate-date">Reference date</label>
+        <input type="date" id="activate-date" />
+      </div>
+      <div class="field">
+        <label for="activate-title">Parent task title (optional)</label>
+        <input type="text" id="activate-title" placeholder="Auto-generated if blank" />
+      </div>
+      <div id="activate-preview" class="activate-preview"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button type="button" class="btn-secondary" id="activate-modal-cancel">Cancel</button>
+        <button type="button" class="btn-primary" id="activate-modal-confirm">Create tasks</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-left">
+      <span class="status-msg" id="save-status"></span>
+    </div>
+    <div class="footer-right">
+      <button type="button" id="save-btn" class="btn-primary">Save all settings</button>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

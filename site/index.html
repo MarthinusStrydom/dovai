@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dovai — Your AI business manager in the terminal</title>
+  <meta name="description" content="Dovai is a multi-provider AI assistant built for business users. Manage tasks, emails, schedules, and documents through natural conversation — all from the terminal." />
+  <meta name="theme-color" content="#0A0E1A" />
+  <link rel="icon" type="image/png" href="/img/icon-192.png" />
+  <link rel="apple-touch-icon" href="/img/icon-192.png" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Dovai — Your AI business manager in the terminal" />
+  <meta property="og:description" content="Multi-provider LLM support, task routing, background services, knowledge graph — all in Rust. MIT licensed." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://dovai.ai" />
+  <meta property="og:image" content="https://dovai.ai/img/logo-full.png" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ========================================================
+       DOVAI.AI — Open-source landing page
+       Color palette from the Dovai brand
+       ======================================================== */
+
+    :root {
+      --dovai-cyan:   #00C8FF;
+      --dovai-sky:    #1EA5E8;
+      --dovai-blue:   #0F78D4;
+      --dovai-deep:   #0B5FB8;
+      --dovai-navy:   #062C69;
+
+      --bg:           #0A0E1A;
+      --bg-raised:    #111827;
+      --bg-card:      #151C2C;
+      --bg-code:      #0D1117;
+
+      --text:         #E8ECF4;
+      --text-soft:    #94A3B8;
+      --text-muted:   #64748B;
+      --border:       rgba(148, 163, 184, 0.12);
+      --border-light: rgba(148, 163, 184, 0.06);
+
+      --glow-cyan:    rgba(0, 200, 255, 0.15);
+      --glow-blue:    rgba(15, 120, 212, 0.20);
+
+      --font-sans:    'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono:    'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+
+      --max-w:        1120px;
+      --section-pad:  100px;
+    }
+
+    /* ---------- Reset ---------- */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--dovai-cyan); text-decoration: none; transition: color 0.2s ease; }
+    a:hover { color: #5DD8FF; }
+
+    img { max-width: 100%; display: block; }
+
+    /* ---------- Utility ---------- */
+    .container {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px;
+      padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+
+    /* ---------- Buttons ---------- */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-sans);
+      font-weight: 600;
+      font-size: 15px;
+      padding: 12px 24px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      line-height: 1.4;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--dovai-cyan) 0%, var(--dovai-blue) 100%);
+      color: #fff;
+      box-shadow: 0 4px 20px var(--glow-cyan), 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .btn-primary:hover {
+      color: #fff;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px var(--glow-cyan), 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .btn-outline:hover {
+      color: var(--dovai-cyan);
+      border-color: var(--dovai-cyan);
+      background: rgba(0, 200, 255, 0.06);
+    }
+
+    .btn-github {
+      background: #fff;
+      color: #0A0E1A;
+      font-weight: 600;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+    .btn-github:hover {
+      color: #0A0E1A;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+    }
+    .btn-github svg { flex-shrink: 0; }
+
+    /* ---------- Nav ---------- */
+    .nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      background: rgba(10, 14, 26, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-light);
+      transition: background 0.3s ease;
+    }
+
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+    }
+    .nav-logo img {
+      height: 34px;
+      width: auto;
+    }
+    .nav-logo span {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-soft);
+      transition: color 0.2s ease;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-cta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .nav-github {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      transition: all 0.2s ease;
+    }
+    .nav-github:hover {
+      color: var(--dovai-cyan);
+      border-color: var(--dovai-cyan);
+      background: rgba(0, 200, 255, 0.06);
+    }
+    .nav-github svg { width: 18px; height: 18px; }
+
+    /* Mobile menu */
+    .nav-toggle {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text);
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    /* ---------- Hero ---------- */
+    .hero {
+      position: relative;
+      padding: 160px 0 120px;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 200, 255, 0.12) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 30% 100%, rgba(15, 120, 212, 0.08) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero .container {
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--dovai-cyan);
+      background: rgba(0, 200, 255, 0.08);
+      border: 1px solid rgba(0, 200, 255, 0.15);
+      padding: 6px 16px;
+      border-radius: 100px;
+      margin-bottom: 28px;
+    }
+    .hero-badge-dot {
+      width: 6px; height: 6px;
+      background: var(--dovai-cyan);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--dovai-cyan);
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -1.5px;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+    .hero h1 .accent {
+      background: linear-gradient(135deg, var(--dovai-cyan), var(--dovai-sky));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2vw, 20px);
+      color: var(--text-soft);
+      max-width: 600px;
+      margin: 0 auto 40px;
+      line-height: 1.6;
+    }
+
+    .hero-install {
+      display: flex;
+      align-items: stretch;
+      max-width: 600px;
+      margin: 0 auto 32px;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      text-align: left;
+    }
+
+    .hero-install-prompt {
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      color: var(--dovai-cyan);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 500;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .hero-install code {
+      flex: 1;
+      padding: 14px 0;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow-x: auto;
+      line-height: 1.6;
+    }
+
+    .hero-install-copy {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      flex-shrink: 0;
+      background: transparent;
+      border: none;
+      border-left: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .hero-install-copy:hover {
+      color: var(--dovai-cyan);
+      background: rgba(0, 200, 255, 0.06);
+    }
+    .hero-install-copy.copied { color: #10B981; }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* ---------- Section ---------- */
+    .section {
+      padding: var(--section-pad) 0;
+      position: relative;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--dovai-cyan);
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700;
+      letter-spacing: -1px;
+      color: #fff;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      font-size: 17px;
+      color: var(--text-soft);
+      max-width: 560px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    /* ---------- Features ---------- */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px 28px;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.3), transparent);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .feature-card:hover {
+      border-color: rgba(0, 200, 255, 0.2);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3), 0 0 40px var(--glow-cyan);
+    }
+    .feature-card:hover::before { opacity: 1; }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, rgba(0, 200, 255, 0.12), rgba(15, 120, 212, 0.12));
+      border: 1px solid rgba(0, 200, 255, 0.1);
+      color: var(--dovai-cyan);
+    }
+
+    .feature-card h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 10px;
+      letter-spacing: -0.3px;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-soft);
+      line-height: 1.6;
+    }
+
+    /* ---------- How It Works ---------- */
+    .how-steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 32px;
+      position: relative;
+    }
+
+    .how-steps::before {
+      content: '';
+      position: absolute;
+      top: 48px;
+      left: calc(16.66% + 24px);
+      right: calc(16.66% + 24px);
+      height: 2px;
+      background: linear-gradient(90deg, var(--dovai-cyan), var(--dovai-blue), var(--dovai-deep));
+      opacity: 0.3;
+    }
+
+    .how-step {
+      text-align: center;
+      position: relative;
+    }
+
+    .how-step-num {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      font-family: var(--font-mono);
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--dovai-cyan);
+      background: var(--bg-card);
+      border: 2px solid rgba(0, 200, 255, 0.25);
+      box-shadow: 0 0 24px var(--glow-cyan);
+      position: relative;
+      z-index: 1;
+    }
+
+    .how-step h3 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+
+    .how-step p {
+      font-size: 14px;
+      color: var(--text-soft);
+      line-height: 1.6;
+    }
+
+    .how-terminal {
+      margin-top: 56px;
+      max-width: 680px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .terminal {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .terminal-dot:nth-child(1) { background: #FF5F57; }
+    .terminal-dot:nth-child(2) { background: #FEBC2E; }
+    .terminal-dot:nth-child(3) { background: #28C840; }
+
+    .terminal-title {
+      flex: 1;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .terminal-body {
+      padding: 20px 24px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-soft);
+    }
+
+    .terminal-body .prompt {
+      color: var(--dovai-cyan);
+      user-select: none;
+    }
+    .terminal-body .cmd {
+      color: var(--text);
+    }
+    .terminal-body .comment {
+      color: var(--text-muted);
+    }
+    .terminal-body .output {
+      color: var(--text-soft);
+    }
+    .terminal-body .success {
+      color: #10B981;
+    }
+
+    /* ---------- Install ---------- */
+    .install-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .install-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      transition: all 0.3s ease;
+    }
+    .install-card:hover {
+      border-color: rgba(0, 200, 255, 0.15);
+    }
+
+    .install-card h3 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    .install-card .install-desc {
+      font-size: 14px;
+      color: var(--text-soft);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .install-code {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      position: relative;
+      overflow-x: auto;
+    }
+
+    .install-code pre {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text);
+      white-space: pre;
+      margin: 0;
+    }
+
+    .install-code .comment {
+      color: var(--text-muted);
+    }
+
+    .install-copy {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .install-copy:hover {
+      color: var(--dovai-cyan);
+      border-color: var(--dovai-cyan);
+      background: rgba(0, 200, 255, 0.06);
+    }
+    .install-copy.copied { color: #10B981; border-color: #10B981; }
+
+    /* ---------- Divider ---------- */
+    .section-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* ---------- Footer ---------- */
+    .footer {
+      padding: 48px 0;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .footer-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .footer-logo img { height: 24px; width: auto; }
+    .footer-logo span {
+      font-weight: 600;
+      font-size: 16px;
+      color: var(--text);
+    }
+
+    .footer-badges {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .badge-mit { color: #10B981; border-color: rgba(16, 185, 129, 0.2); }
+    .badge-rust { color: #DEA584; border-color: rgba(222, 165, 132, 0.2); }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--text-muted);
+      transition: color 0.2s ease;
+    }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ---------- Scroll animation ---------- */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 900px) {
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .how-steps {
+        grid-template-columns: 1fr;
+        gap: 40px;
+      }
+      .how-steps::before { display: none; }
+      .install-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      :root {
+        --section-pad: 64px;
+      }
+
+      .nav-links { display: none; }
+      .nav-toggle { display: block; }
+
+      .nav-links.open {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        top: 64px;
+        left: 0; right: 0;
+        background: rgba(10, 14, 26, 0.97);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+        padding: 16px 24px;
+        gap: 16px;
+      }
+
+      .nav-cta { gap: 8px; }
+      .nav-github span { display: none; }
+
+      .hero { padding: 120px 0 80px; }
+
+      .hero-install {
+        flex-direction: column;
+        text-align: center;
+      }
+      .hero-install-prompt {
+        padding: 12px 16px 0;
+        justify-content: center;
+      }
+      .hero-install code {
+        padding: 8px 16px 14px;
+        font-size: 12px;
+        text-align: center;
+      }
+      .hero-install-copy {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid var(--border);
+        padding: 10px;
+      }
+
+      .features-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-inner {
+        flex-direction: column;
+        text-align: center;
+      }
+      .footer-left { flex-direction: column; }
+      .footer-links { flex-wrap: wrap; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== NAV ==================== -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">
+        <img src="/img/icon-192.png" alt="Dovai icon" />
+        <span>dovai</span>
+      </a>
+
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#install">Install</a></li>
+      </ul>
+
+      <div class="nav-cta">
+        <a href="https://github.com/MarthinusStrydom/dovai" class="nav-github" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span>Star on GitHub</span>
+        </a>
+        <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ==================== HERO ==================== -->
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-grid"></div>
+    <div class="container">
+      <div class="hero-badge">
+        <span class="hero-badge-dot"></span>
+        Open source &middot; MIT licensed
+      </div>
+
+      <h1>Your <span class="accent">AI business manager</span><br />in the terminal.</h1>
+
+      <p class="hero-sub">
+        Multi-provider AI assistant that manages tasks, emails, schedules, and documents
+        through natural conversation. Written in Rust.
+      </p>
+
+      <div class="hero-install" id="hero-install">
+        <span class="hero-install-prompt">$</span>
+        <code>curl -fsSL https://raw.githubusercontent.com/MarthinusStrydom/dovai/main/install.sh | sh</code>
+        <button class="hero-install-copy" id="hero-copy" aria-label="Copy install command">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+      </div>
+
+      <div class="hero-actions">
+        <a href="https://github.com/MarthinusStrydom/dovai" class="btn btn-github" target="_blank" rel="noopener">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+        <a href="#install" class="btn btn-outline">View install options</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== FEATURES ==================== -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-header fade-in">
+        <span class="section-label">Features</span>
+        <h2 class="section-title">Everything you need to run your business</h2>
+        <p class="section-desc">
+          One terminal. Multiple AI providers. All your operations managed through natural conversation.
+        </p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card fade-in">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="7.5 4.21 12 6.81 16.5 4.21"/><polyline points="7.5 19.79 7.5 14.6 3 12"/><polyline points="21 12 16.5 14.6 16.5 19.79"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          </div>
+          <h3>Multi-Provider LLM</h3>
+          <p>Anthropic (Claude), xAI (Grok), OpenAI, and local models via LM Studio or Ollama. Use the best model for each job.</p>
+        </div>
+
+        <div class="feature-card fade-in">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 012 2v7"/><path d="M11 18H8a2 2 0 01-2-2V9"/></svg>
+          </div>
+          <h3>Task Routing</h3>
+          <p>Assign different models to different roles: coordinator, direct tasks, complex analysis, and document filing. Each model plays to its strengths.</p>
+        </div>
+
+        <div class="feature-card fade-in">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h3>Background Services</h3>
+          <p>Email polling, Telegram bot integration, scheduled task checks, and automatic document filing. Your agent works while you sleep.</p>
+        </div>
+
+        <div class="feature-card fade-in">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><line x1="6.7" y1="6.7" x2="9.5" y2="9.5"/><line x1="14.5" y1="9.5" x2="17.3" y2="6.7"/><line x1="6.7" y1="17.3" x2="9.5" y2="14.5"/><line x1="14.5" y1="14.5" x2="17.3" y2="17.3"/></svg>
+          </div>
+          <h3>Knowledge Graph</h3>
+          <p>Automatic relationship extraction from your documents. Dovai builds a structured map of people, organizations, and connections as you work.</p>
+        </div>
+
+        <div class="feature-card fade-in">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <h3>Selective Forgetting</h3>
+          <p>Intelligent token management that compresses stale tool outputs between conversation turns. Keep context sharp without burning tokens.</p>
+        </div>
+
+        <div class="feature-card fade-in">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </div>
+          <h3>Web Settings UI</h3>
+          <p>Configure providers, model routing, tasks, and SOPs from an in-browser dashboard. No manual config file editing required.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ==================== HOW IT WORKS ==================== -->
+  <section class="section" id="how-it-works">
+    <div class="container">
+      <div class="section-header fade-in">
+        <span class="section-label">How It Works</span>
+        <h2 class="section-title">Up and running in under a minute</h2>
+        <p class="section-desc">
+          Install, configure your API keys in the browser, and start talking to your AI business manager.
+        </p>
+      </div>
+
+      <div class="how-steps fade-in">
+        <div class="how-step">
+          <div class="how-step-num">1</div>
+          <h3>Install</h3>
+          <p>Run the one-liner install script or build from source. The binary lands at <code style="font-family: var(--font-mono); font-size: 13px; color: var(--dovai-cyan);">/usr/local/bin/dovai</code>.</p>
+        </div>
+
+        <div class="how-step">
+          <div class="how-step-num">2</div>
+          <h3>Configure</h3>
+          <p>First launch opens a browser page where you set up your API keys and assign models to agent roles. No JSON editing.</p>
+        </div>
+
+        <div class="how-step">
+          <div class="how-step-num">3</div>
+          <h3>Converse</h3>
+          <p>The terminal REPL starts automatically. Talk naturally. Dovai manages tasks, files documents, sends emails, and runs your SOPs.</p>
+        </div>
+      </div>
+
+      <div class="how-terminal fade-in">
+        <div class="terminal">
+          <div class="terminal-header">
+            <span class="terminal-dot"></span>
+            <span class="terminal-dot"></span>
+            <span class="terminal-dot"></span>
+            <span class="terminal-title">dovai</span>
+            <span style="width: 36px;"></span>
+          </div>
+          <div class="terminal-body">
+            <div><span class="prompt">$</span> <span class="cmd">dovai</span></div>
+            <div><span class="success">&#10003;</span> <span class="output">Settings saved. Starting REPL...</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment"># Dovai is ready. Type naturally.</span></div>
+            <div>&nbsp;</div>
+            <div><span class="prompt">you &gt;</span> <span class="cmd">Schedule a follow-up with Sarah about the Q3 report</span></div>
+            <div><span class="prompt">dovai &gt;</span> <span class="output">Done. Follow-up with Sarah scheduled for Thursday 10am.</span></div>
+            <div><span class="output">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;I've added it to your task list and set a reminder.</span></div>
+            <div>&nbsp;</div>
+            <div><span class="prompt">you &gt;</span> <span class="cmd">File the signed lease from my downloads folder</span></div>
+            <div><span class="prompt">dovai &gt;</span> <span class="output">Found signed-lease-unit-4B.pdf in ~/Downloads.</span></div>
+            <div><span class="output">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Filed to workspace/properties/unit-4B/leases/</span></div>
+            <div><span class="output">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Knowledge graph updated: tenant &rarr; unit link added.</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ==================== INSTALL ==================== -->
+  <section class="section" id="install">
+    <div class="container">
+      <div class="section-header fade-in">
+        <span class="section-label">Install</span>
+        <h2 class="section-title">Get started in seconds</h2>
+        <p class="section-desc">
+          Choose the install method that works for you. Both get you the same binary.
+        </p>
+      </div>
+
+      <div class="install-grid fade-in">
+        <div class="install-card">
+          <h3>Quick install</h3>
+          <p class="install-desc">Downloads the latest release for your platform. macOS and Linux supported.</p>
+          <div class="install-code">
+            <button class="install-copy" data-copy="curl -fsSL https://raw.githubusercontent.com/MarthinusStrydom/dovai/main/install.sh | sh" aria-label="Copy">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+            <pre>curl -fsSL https://raw.githubusercontent.com/MarthinusStrydom/dovai/main/install.sh | sh</pre>
+          </div>
+        </div>
+
+        <div class="install-card">
+          <h3>Build from source</h3>
+          <p class="install-desc">Requires Rust toolchain. Clone the repo and build a release binary.</p>
+          <div class="install-code">
+            <button class="install-copy" data-copy="git clone https://github.com/MarthinusStrydom/dovai.git
+cd dovai/rust && cargo build --release
+sudo ln -sf &quot;$(pwd)/target/release/dovai&quot; /usr/local/bin/dovai" aria-label="Copy">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+            <pre>git clone https://github.com/MarthinusStrydom/dovai.git
+cd dovai/rust &amp;&amp; cargo build --release
+sudo ln -sf "$(pwd)/target/release/dovai" \
+  /usr/local/bin/dovai</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== FOOTER ==================== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-left">
+          <div class="footer-logo">
+            <img src="/img/icon-192.png" alt="Dovai" />
+            <span>dovai</span>
+          </div>
+          <div class="footer-badges">
+            <span class="badge badge-mit">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              MIT License
+            </span>
+            <span class="badge badge-rust">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              Built with Rust
+            </span>
+          </div>
+        </div>
+
+        <ul class="footer-links">
+          <li><a href="https://github.com/MarthinusStrydom/dovai" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://github.com/MarthinusStrydom/dovai/issues" target="_blank" rel="noopener">Issues</a></li>
+          <li><a href="https://github.com/MarthinusStrydom/dovai/blob/main/LICENSE" target="_blank" rel="noopener">License</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    /* ---------- Mobile nav toggle ---------- */
+    const toggle = document.getElementById('nav-toggle');
+    const links = document.getElementById('nav-links');
+    toggle.addEventListener('click', () => {
+      links.classList.toggle('open');
+    });
+    /* Close mobile nav on link click */
+    links.querySelectorAll('a').forEach(a => {
+      a.addEventListener('click', () => links.classList.remove('open'));
+    });
+
+    /* ---------- Copy buttons ---------- */
+    function flashCopied(btn) {
+      btn.classList.add('copied');
+      const svg = btn.querySelector('svg');
+      const original = svg.innerHTML;
+      svg.innerHTML = '<polyline points="20 6 9 17 4 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        svg.innerHTML = original;
+      }, 2000);
+    }
+
+    /* Hero copy */
+    document.getElementById('hero-copy').addEventListener('click', () => {
+      const text = 'curl -fsSL https://raw.githubusercontent.com/MarthinusStrydom/dovai/main/install.sh | sh';
+      navigator.clipboard.writeText(text).then(() => {
+        flashCopied(document.getElementById('hero-copy'));
+      });
+    });
+
+    /* Install section copy buttons */
+    document.querySelectorAll('.install-copy').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const text = btn.getAttribute('data-copy');
+        navigator.clipboard.writeText(text).then(() => flashCopied(btn));
+      });
+    });
+
+    /* ---------- Scroll fade-in ---------- */
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    /* ---------- Nav background on scroll ---------- */
+    const nav = document.getElementById('nav');
+    let lastScroll = 0;
+    window.addEventListener('scroll', () => {
+      const scrollY = window.scrollY;
+      if (scrollY > 50) {
+        nav.style.background = 'rgba(10, 14, 26, 0.95)';
+        nav.style.borderBottomColor = 'rgba(148, 163, 184, 0.1)';
+      } else {
+        nav.style.background = 'rgba(10, 14, 26, 0.85)';
+        nav.style.borderBottomColor = 'rgba(148, 163, 184, 0.06)';
+      }
+      lastScroll = scrollY;
+    }, { passive: true });
+
+    /* ---------- Smooth scroll for anchor links ---------- */
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const target = document.querySelector(a.getAttribute('href'));
+        if (target) {
+          const offset = 80; /* nav height */
+          const top = target.getBoundingClientRect().top + window.scrollY - offset;
+          window.scrollTo({ top, behavior: 'smooth' });
+        }
+      });
+    });
+  </script>
+</body>
+</html>

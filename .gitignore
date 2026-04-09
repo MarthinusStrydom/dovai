@@ -1,0 +1,29 @@
+# Build artifacts
+rust/target/
+rust/.sandbox-home/
+rust/.sandbox-tmp/
+
+# OS files
+.DS_Store
+
+# Python
+__pycache__/
+
+# Local data / sessions
+rust/.dovai/
+rust/.dovai-agents/
+.dovai/
+
+# Archive / legacy
+archive/
+.omx/
+
+# Environment files
+.env
+.env.*
+.env.local
+
+# Claude Code local artifacts
+.claude/
+rust/.claude/
+CLAUDE.md
