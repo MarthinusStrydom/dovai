@@ -445,10 +445,7 @@ mod tests {
         let mut fail_msgs = fail.messages().to_vec();
         fail_msgs.sort();
         assert!(!fail.is_denied());
-        assert_eq!(
-            fail_msgs,
-            vec!["plugin failure one", "plugin failure two"]
-        );
+        assert_eq!(fail_msgs, vec!["plugin failure one", "plugin failure two"]);
 
         let _ = fs::remove_dir_all(config_home);
         let _ = fs::remove_dir_all(first_source_root);
