@@ -480,6 +480,13 @@ function readWorkspaceForm() {
 function fillProvidersForm(pr) {
   $("#pr-lmstudio-url").value = pr.lm_studio_url || "";
   $("#pr-lmstudio-model").value = pr.lm_studio_model || "";
+  // Email backend + Gmail OAuth fields
+  const backend = pr.email_backend || "imap";
+  $("#pr-email-backend").value = backend;
+  $("#pr-gmail-client-id").value = pr.gmail_client_id || "";
+  $("#pr-gmail-client-secret").value = pr.gmail_client_secret || "";
+  $("#pr-gmail-aliases").value = (pr.gmail_send_aliases || []).join(", ");
+  // IMAP / SMTP (legacy)
   $("#pr-imap-host").value = pr.email_imap_host || "";
   $("#pr-imap-port").value = pr.email_imap_port || 993;
   $("#pr-imap-user").value = pr.email_imap_user || "";
@@ -492,11 +499,20 @@ function fillProvidersForm(pr) {
   $("#pr-tg-token").value = pr.telegram_bot_token || "";
   $("#pr-tg-allowed").value = (pr.telegram_allowed_chat_ids || []).join(",");
   $("#pr-tg-default").value = pr.telegram_default_chat_id || "";
+  updateEmailBackendVisibility();
+  refreshGmailStatus();
 }
 function readProvidersForm() {
   return {
     lm_studio_url: $("#pr-lmstudio-url").value.trim() || "http://127.0.0.1:1234",
     lm_studio_model: $("#pr-lmstudio-model").value.trim(),
+    email_backend: $("#pr-email-backend").value,
+    gmail_client_id: $("#pr-gmail-client-id").value.trim(),
+    gmail_client_secret: $("#pr-gmail-client-secret").value.trim(),
+    gmail_send_aliases: $("#pr-gmail-aliases").value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     email_imap_host: $("#pr-imap-host").value.trim(),
     email_imap_port: parseInt($("#pr-imap-port").value || "993", 10),
     email_imap_user: $("#pr-imap-user").value.trim(),
@@ -514,6 +530,51 @@ function readProvidersForm() {
     telegram_default_chat_id: $("#pr-tg-default").value.trim(),
   };
 }
+
+function updateEmailBackendVisibility() {
+  const backend = $("#pr-email-backend")?.value || "imap";
+  $("#pr-gmail-section")?.classList.toggle("hidden", backend !== "gmail_oauth");
+  $("#pr-imap-section")?.classList.toggle("hidden", backend !== "imap");
+}
+
+async function refreshGmailStatus() {
+  const el = $("#pr-gmail-status");
+  const disconnectBtn = $("#btn-disconnect-gmail");
+  if (!el) return;
+  try {
+    const s = await api("GET", "/api/auth/gmail/status");
+    if (!s.client_id_configured) {
+      el.textContent = "Status: client ID + secret not saved yet. Paste them and click Save email settings first.";
+      disconnectBtn?.classList.add("hidden");
+    } else if (s.connected) {
+      el.innerHTML = `Status: <strong>connected</strong> as <code>${escapeHtml(s.user_email)}</code>`;
+      disconnectBtn?.classList.remove("hidden");
+    } else {
+      el.textContent = "Status: client ID saved but not yet authorized. Click Connect Gmail to run the consent flow.";
+      disconnectBtn?.classList.add("hidden");
+    }
+  } catch (err) {
+    el.textContent = "Status: could not reach server — " + err.message;
+  }
+}
+
+$("#pr-email-backend")?.addEventListener("change", updateEmailBackendVisibility);
+$("#btn-connect-gmail")?.addEventListener("click", async () => {
+  // Save any unsaved client ID / secret first so the server has them
+  try {
+    await saveAllProviders("Saving before Connect…");
+  } catch (err) { alert(err.message); return; }
+  // Full-page redirect so Google's consent flow works without popup blockers
+  window.location.href = "/api/auth/gmail/start";
+});
+$("#btn-disconnect-gmail")?.addEventListener("click", async () => {
+  if (!confirm("Disconnect Gmail? Sarah won't be able to read or send email until you reconnect.")) return;
+  try {
+    await api("POST", "/api/auth/gmail/disconnect");
+    flash("Gmail disconnected.");
+    await refreshGmailStatus();
+  } catch (err) { alert(err.message); }
+});
 
 async function loadSettings() {
   try {
@@ -1576,3 +1637,24 @@ loadDomains();
 loadHome();
 refreshSetup();
 setInterval(loadHome, 5000);
+
+// If we're landing on the Gmail callback's redirect (/#settings?gmail=ok&msg=...),
+// jump straight to the Settings tab and surface the result.
+(function handleGmailCallbackLanding() {
+  const hash = window.location.hash || "";
+  const match = hash.match(/^#settings\?(.+)$/);
+  if (!match) return;
+  const params = new URLSearchParams(match[1]);
+  const gmail = params.get("gmail");
+  const msg = params.get("msg") || "";
+  if (!gmail) return;
+  // Show Settings tab
+  $(`#tabs button[data-tab="settings"]`)?.click();
+  // Jump to Channels sub-tab where the Gmail card lives
+  $(`#settings-nav button[data-stab="channels"]`)?.click();
+  if (gmail === "ok") flash(msg || "Gmail connected.");
+  else alert("Gmail connection failed: " + msg);
+  // Clean URL
+  history.replaceState(null, "", "/#settings");
+  setTimeout(refreshGmailStatus, 300);
+})();

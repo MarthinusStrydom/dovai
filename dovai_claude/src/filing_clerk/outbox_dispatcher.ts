@@ -38,6 +38,7 @@ import chokidar from "chokidar";
 import nodemailer from "nodemailer";
 import { loadProviderSettings } from "../lib/config.ts";
 import { enqueueWake } from "../wake/queue.ts";
+import { makeGmailClient } from "../lib/gmail_auth.ts";
 import type { GlobalPaths } from "../lib/global_paths.ts";
 import type { Logger } from "../lib/logger.ts";
 import type { TelegramService } from "./telegram_bot.ts";
@@ -48,6 +49,18 @@ import { checkEmailDedup } from "./email_dedup.ts";
 const RETRY_DELAYS_MS = [10_000, 60_000, 300_000];
 
 interface OutgoingEmail {
+  /**
+   * Optional FROM override. If set, must match one of `gmail_send_aliases`
+   * in providers.md (the aliases you've verified in Gmail → Settings →
+   * Accounts → Send mail as). Sarah picks which alias to send from on a
+   * per-message basis — e.g. sarah.mitchell@mahezi.co.za for EHHOA work,
+   * sarah.mitchell@exoticvacations.co.za for travel business. If absent,
+   * the first alias in the list is used as default.
+   *
+   * The value can be a plain address ("sarah.mitchell@mahezi.co.za") or
+   * a full RFC 5322 form ("Sarah Mitchell <sarah.mitchell@mahezi.co.za>").
+   */
+  from?: string;
   to?: string | string[];
   cc?: string | string[];
   bcc?: string | string[];
@@ -408,6 +421,77 @@ export class OutboxDispatcher {
   }
 
   private async sendEmail(msg: OutgoingEmail): Promise<void> {
+    const { data: pr } = loadProviderSettings(this.gp);
+    if (pr.email_backend === "gmail_oauth") {
+      await this.sendEmailGmail(msg);
+    } else {
+      await this.sendEmailSmtp(msg);
+    }
+  }
+
+  private resolveFromAddress(msg: OutgoingEmail): string {
+    const { data: pr } = loadProviderSettings(this.gp);
+    if (pr.email_backend === "gmail_oauth") {
+      // If the draft specifies a from, prefer it (but warn if not in aliases)
+      if (msg.from) {
+        const rawAddr = msg.from.match(/<([^>]+)>/)?.[1] ?? msg.from;
+        if (pr.gmail_send_aliases.length > 0 && !pr.gmail_send_aliases.includes(rawAddr)) {
+          this.logger.warn("from address is not in gmail_send_aliases — Gmail may rewrite it", {
+            requested: msg.from,
+            aliases: pr.gmail_send_aliases,
+          });
+        }
+        return msg.from;
+      }
+      // Default to the first configured alias, or fall back to the account's primary
+      return pr.gmail_send_aliases[0] || pr.gmail_user_email;
+    }
+    // SMTP path
+    return msg.from || pr.email_smtp_from || pr.email_smtp_user;
+  }
+
+  /** Build a raw RFC 5322 MIME message via nodemailer's stream transport (no send). */
+  private async composeRawMime(msg: OutgoingEmail): Promise<Buffer> {
+    const from = this.resolveFromAddress(msg);
+    const attachments = (msg.attachments || []).map((p) => {
+      const abs = path.isAbsolute(p) ? p : path.join(this.gp.dovaiHome, p);
+      return { filename: path.basename(abs), path: abs };
+    });
+    const transport = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: "unix",
+    });
+    const info = await transport.sendMail({
+      from,
+      to: msg.to,
+      cc: msg.cc,
+      bcc: msg.bcc,
+      subject: msg.subject || "(no subject)",
+      text: msg.body_text,
+      html: msg.body_html,
+      attachments,
+    });
+    // `info.message` is a Buffer (because buffer: true)
+    return info.message as Buffer;
+  }
+
+  /** Send via Gmail API (messages.send) — lets us pick any verified alias. */
+  private async sendEmailGmail(msg: OutgoingEmail): Promise<void> {
+    const { data: pr } = loadProviderSettings(this.gp);
+    if (!pr.gmail_refresh_token) throw new Error("Gmail is not connected (no refresh token)");
+
+    const gmail = makeGmailClient(pr);
+    const raw = await this.composeRawMime(msg);
+    const encoded = raw.toString("base64url");
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: encoded },
+    });
+  }
+
+  /** Send via SMTP (legacy IMAP/SMTP backend). */
+  private async sendEmailSmtp(msg: OutgoingEmail): Promise<void> {
     const { data: providers } = loadProviderSettings(this.gp);
     if (!providers.email_smtp_host) throw new Error("SMTP not configured");
 
@@ -429,7 +513,7 @@ export class OutboxDispatcher {
     });
 
     await transporter.sendMail({
-      from: providers.email_smtp_from || providers.email_smtp_user,
+      from: this.resolveFromAddress(msg),
       to: msg.to,
       cc: msg.cc,
       bcc: msg.bcc,

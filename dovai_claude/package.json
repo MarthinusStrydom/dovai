@@ -20,6 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "chokidar": "^3.6.0",
     "croner": "^8.0.0",
+    "googleapis": "^171.4.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.4.0",
     "imapflow": "^1.0.161",

@@ -24,6 +24,36 @@ export interface WorkspaceSettings {
 export interface ProviderSettings {
   lm_studio_url: string;
   lm_studio_model: string;
+
+  /**
+   * Email backend. Valid: "gmail_oauth" (recommended, uses Gmail API) or
+   * "imap" (legacy, IMAP + SMTP). Determines which of the gmail_* or
+   * email_imap_* / email_smtp_* fields the poller + outbox dispatcher read.
+   * Defaults to "imap" for backwards compatibility with existing installs.
+   */
+  email_backend: "gmail_oauth" | "imap";
+
+  // --- Gmail OAuth backend ---
+  /** OAuth2 client ID from Google Cloud Console (Desktop type). */
+  gmail_client_id: string;
+  /** OAuth2 client secret paired with the client ID. */
+  gmail_client_secret: string;
+  /**
+   * Long-lived refresh token obtained via the Connect-Gmail consent flow.
+   * Stored here so the server can mint fresh access tokens autonomously.
+   * Empty until the user completes the OAuth flow.
+   */
+  gmail_refresh_token: string;
+  /** The Gmail account Sarah reads from (e.g. marthinus@marthinus.co.za). */
+  gmail_user_email: string;
+  /**
+   * Verified Send-mail-as aliases Sarah is allowed to send from. The first
+   * entry is the default FROM. Aliases must already be added + verified in
+   * Gmail → Settings → Accounts → Send mail as.
+   */
+  gmail_send_aliases: string[];
+
+  // --- IMAP/SMTP backend (legacy) ---
   email_imap_host: string;
   email_imap_port: number;
   email_imap_user: string;
@@ -33,6 +63,7 @@ export interface ProviderSettings {
   email_smtp_user: string;
   email_smtp_password: string;
   email_smtp_from: string;
+
   telegram_bot_token: string;
   telegram_allowed_chat_ids: string[];
   telegram_default_chat_id: string;
@@ -57,6 +88,12 @@ const DEFAULT_WORKSPACE: WorkspaceSettings = {
 const DEFAULT_PROVIDERS: ProviderSettings = {
   lm_studio_url: "http://127.0.0.1:1234",
   lm_studio_model: "",
+  email_backend: "imap",
+  gmail_client_id: "",
+  gmail_client_secret: "",
+  gmail_refresh_token: "",
+  gmail_user_email: "",
+  gmail_send_aliases: [],
   email_imap_host: "",
   email_imap_port: 993,
   email_imap_user: "",
@@ -187,11 +224,21 @@ export function computeSetupStatus(gp: GlobalPaths): SetupStatus {
     nonEmpty(ws.workspace_name) &&
     nonEmpty(ws.user_name) &&
     nonEmpty(ws.user_email);
-  const email_configured =
+  // Email is configured if EITHER backend is fully set up:
+  //   - gmail_oauth: client_id + client_secret + refresh_token + user_email
+  //   - imap:        imap host/user + smtp host/user
+  const gmail_oauth_configured =
+    pr.email_backend === "gmail_oauth" &&
+    nonEmpty(pr.gmail_client_id) &&
+    nonEmpty(pr.gmail_client_secret) &&
+    nonEmpty(pr.gmail_refresh_token) &&
+    nonEmpty(pr.gmail_user_email);
+  const imap_configured =
     nonEmpty(pr.email_imap_host) &&
     nonEmpty(pr.email_imap_user) &&
     nonEmpty(pr.email_smtp_host) &&
     nonEmpty(pr.email_smtp_user);
+  const email_configured = gmail_oauth_configured || imap_configured;
   const telegram_configured = nonEmpty(pr.telegram_bot_token);
   const wakes_configured = Array.isArray(wk.wake_times) && wk.wake_times.length > 0;
 

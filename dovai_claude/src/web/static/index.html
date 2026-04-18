@@ -279,18 +279,54 @@
         <div id="stab-channels" class="stab">
           <div class="card">
             <h2>Email</h2>
-            <h3>Incoming (IMAP)</h3>
-            <label>Host<input id="pr-imap-host" /></label>
-            <label>Port<input id="pr-imap-port" type="number" placeholder="993" /></label>
-            <label>User<input id="pr-imap-user" /></label>
-            <label>Password<input id="pr-imap-pass" type="password" /></label>
-            <h3>Outgoing (SMTP)</h3>
-            <label>Host<input id="pr-smtp-host" /></label>
-            <label>Port<input id="pr-smtp-port" type="number" placeholder="587" /></label>
-            <label>User<input id="pr-smtp-user" /></label>
-            <label>Password<input id="pr-smtp-pass" type="password" /></label>
-            <label>From address<input id="pr-smtp-from" /></label>
-            <button class="primary" id="btn-save-email">Save email</button>
+            <p class="muted small">
+              Choose a backend. <strong>Gmail (OAuth)</strong> is recommended — it uses
+              the Gmail API, supports multiple Send-mail-as aliases, and syncs drafts
+              natively. <strong>IMAP/SMTP</strong> is the legacy path.
+            </p>
+            <label>Backend
+              <select id="pr-email-backend">
+                <option value="gmail_oauth">Gmail (OAuth)</option>
+                <option value="imap">IMAP / SMTP (legacy)</option>
+              </select>
+            </label>
+
+            <!-- Gmail OAuth backend -->
+            <div id="pr-gmail-section">
+              <h3>Google OAuth client</h3>
+              <p class="muted small">
+                Paste from your Google Cloud Desktop OAuth client JSON.
+                Once client ID + secret are set, click Connect Gmail to run
+                the consent flow.
+              </p>
+              <label>Client ID<input id="pr-gmail-client-id" /></label>
+              <label>Client secret<input id="pr-gmail-client-secret" type="password" /></label>
+              <label>Send-mail-as aliases (comma-separated, first is default FROM)
+                <input id="pr-gmail-aliases" placeholder="sarah.mitchell@mahezi.co.za, sarah.mitchell@exoticvacations.co.za" />
+              </label>
+              <div id="pr-gmail-status" class="muted small" style="margin:.5em 0;">
+                Status: unknown (save settings first, then click Connect Gmail)
+              </div>
+              <button class="primary" id="btn-connect-gmail">Connect Gmail</button>
+              <button class="secondary hidden" id="btn-disconnect-gmail">Disconnect</button>
+            </div>
+
+            <!-- IMAP / SMTP backend -->
+            <div id="pr-imap-section" class="hidden">
+              <h3>Incoming (IMAP)</h3>
+              <label>Host<input id="pr-imap-host" /></label>
+              <label>Port<input id="pr-imap-port" type="number" placeholder="993" /></label>
+              <label>User<input id="pr-imap-user" /></label>
+              <label>Password<input id="pr-imap-pass" type="password" /></label>
+              <h3>Outgoing (SMTP)</h3>
+              <label>Host<input id="pr-smtp-host" /></label>
+              <label>Port<input id="pr-smtp-port" type="number" placeholder="587" /></label>
+              <label>User<input id="pr-smtp-user" /></label>
+              <label>Password<input id="pr-smtp-pass" type="password" /></label>
+              <label>From address<input id="pr-smtp-from" /></label>
+            </div>
+
+            <button class="primary" id="btn-save-email">Save email settings</button>
           </div>
           <div class="card">
             <h2>Telegram</h2>

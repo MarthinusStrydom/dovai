@@ -110,20 +110,34 @@ export function acquireOwnership(dataRoot: string, stateRoot: string): AcquireRe
   const fresh = isOwnerFresh(existing);
   const sameHost = existing.hostname === os.hostname();
 
-  if (fresh && sameHost) {
+  // On the same host we can verify the claimed PID is actually running.
+  // If it isn't, the lock is stale regardless of heartbeat — take over.
+  // (Cross-host we can't check remotely, so heartbeat is the only signal.)
+  const sameHostDead = sameHost && !isPidAlive(existing.pid);
+
+  if (fresh && sameHost && !sameHostDead) {
     return { ok: false, reason: "same_host_live", existing };
   }
   if (fresh && !sameHost) {
     return { ok: false, reason: "other_host_live", existing };
   }
 
-  // Stale — take over
+  // Stale or crashed — take over
   writeOwner(dataRoot, startedAt);
   return {
     ok: true,
-    takeover: sameHost ? "same_host_crash" : "stale",
+    takeover: sameHostDead ? "same_host_crash" : "stale",
     previous: existing,
   };
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Refresh the heartbeat. Called every 30s on the server heartbeat interval. */

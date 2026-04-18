@@ -621,6 +621,7 @@ Write to `dovai_files/email/outbox/<timestamp>_<slug>.json`:
 
 ```json
 {
+  "from": "you@yourdomain.example",
   "to": ["trustees@example.org"],
   "cc": [],
   "bcc": [],
@@ -631,8 +632,15 @@ Write to `dovai_files/email/outbox/<timestamp>_<slug>.json`:
 }
 ```
 
-Attachment paths are relative to the workspace root. SMTP credentials in
-`.dovai/settings/providers.md` are used automatically.
+**Picking the `from` alias.** If the user has multiple verified
+Send-mail-as aliases (see `settings/providers.md` →
+`gmail_send_aliases`), pick the one that matches the domain of the work.
+If `from` is omitted, the first alias in the list is used as default. If
+the user has only one alias, you can omit `from` entirely.
+
+Attachment paths are relative to the workspace root. Email credentials in
+`settings/providers.md` are used automatically — you never need to think
+about IMAP/SMTP/Gmail API mechanics.
 
 Follow the email signature and CC rules in your `identity.md` — they are
 specific to your organisation.
