@@ -1,0 +1,638 @@
+#!/usr/bin/env bash
+# dovai — single entry point for everything Dovai.
+#
+#   dovai                     launch Sarah (start server + AI CLI)
+#   dovai --new-window        same, in a new Terminal.app window
+#   dovai start               start the server daemon only
+#   dovai start --port 8080   pin a port (default: random)
+#   dovai stop                stop the server + kill all orphans
+#   dovai status              pre-flight + running-server check
+#   dovai doctor              check prerequisites only
+#   dovai cleanup             kill orphaned Dovai processes
+#   dovai help                show usage
+#
+# All Dovai state lives under ~/.dovai/ (single-Sarah architecture).
+
+set -e
+
+DOVAI_HOME="${DOVAI_HOME:-$HOME/.dovai}"
+
+# Resolve the data-dir pointer. Post-migration, user content (settings,
+# conversation_log, etc) lives outside ~/.dovai/ at a user-picked location
+# (typically Drive/iCloud). Falls back to DOVAI_HOME if no pointer exists.
+# See docs/PLAN_DATA_DIR_SPLIT.md.
+DOVAI_DATA="$DOVAI_HOME"
+if [ -f "$DOVAI_HOME/data_dir" ]; then
+  _DATA_CANDIDATE="$(head -n1 "$DOVAI_HOME/data_dir" | tr -d '\n\r')"
+  if [ -n "$_DATA_CANDIDATE" ] && [ -d "$_DATA_CANDIDATE" ]; then
+    DOVAI_DATA="$_DATA_CANDIDATE"
+  fi
+fi
+
+# Resolve symlinks so invoking via ~/.local/bin/dovai still finds the real
+# project root. macOS has no `readlink -f`, so walk the chain manually.
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+  LINK_TARGET="$(readlink "$SCRIPT_PATH")"
+  case "$LINK_TARGET" in
+    /*) SCRIPT_PATH="$LINK_TARGET" ;;
+    *)  SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/$LINK_TARGET" ;;
+  esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ------- doctor subcommand -------
+if [ "${1:-}" = "doctor" ]; then
+  printf "Dovai prerequisite check\n\n"
+  check() {
+    local name="$1" cmd="$2" ver_flag="$3" hint="$4"
+    if command -v "$cmd" >/dev/null 2>&1; then
+      local ver
+      ver="$($cmd $ver_flag 2>&1 | head -1 | cut -c1-60)"
+      printf "  \033[32m✓\033[0m %-12s %s\n" "$name" "$ver"
+    else
+      printf "  \033[31m✗\033[0m %-12s missing — %s\n" "$name" "$hint"
+    fi
+  }
+  check "node"      node       "--version" "install Node 20+: brew install node"
+  check "claude"    claude     "--version" "install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
+  check "pdftotext" pdftotext  "-v"        "brew install poppler"
+  check "tesseract" tesseract  "--version" "brew install tesseract"
+  check "pandoc"    pandoc     "--version" "brew install pandoc"
+  check "ocrmypdf"  ocrmypdf   "--version" "brew install ocrmypdf"
+  printf "\n"
+  if [ -d "$PROJECT_ROOT/node_modules" ]; then
+    printf "  \033[32m✓\033[0m deps         node_modules present\n"
+  else
+    printf "  \033[31m✗\033[0m deps         run: %s/install.sh\n" "$PROJECT_ROOT"
+  fi
+  exit 0
+fi
+
+# ------- help -------
+if [ "${1:-}" = "help" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<EOF
+Usage:
+  dovai                     launch Sarah (start server + AI CLI)
+  dovai --new-window        same, in a new Terminal.app window
+  dovai start               start the server daemon only
+  dovai start --port 8080   pin a port (default: random)
+  dovai stop                stop the server + kill orphans
+  dovai status              pre-flight + server status check
+  dovai doctor              check prerequisites only
+  dovai cleanup             kill orphaned processes
+  dovai help                this message
+
+All Dovai state lives under ~/.dovai/ (or \$DOVAI_HOME).
+
+The server runs as a detached daemon — it survives terminal closes and
+SSH disconnects. Use 'dovai stop' to stop it.
+EOF
+  exit 0
+fi
+
+# ------- status subcommand -------
+if [ "${1:-}" = "status" ]; then
+  c_reset="\033[0m"; c_bold="\033[1m"; c_dim="\033[2m"
+  c_green="\033[32m"; c_yellow="\033[33m"; c_red="\033[31m"; c_blue="\033[34m"
+  c_brand="\033[1;38;5;203m"
+
+  ok()    { printf "  ${c_green}✓${c_reset} %s\n" "$*"; }
+  warn()  { printf "  ${c_yellow}!${c_reset} %s\n" "$*"; }
+  fail()  { printf "  ${c_red}✗${c_reset} %s\n" "$*"; }
+
+  printf "\n"
+  printf "${c_brand}  ░███████     ░██████   ░██    ░██    ░███    ░██████${c_reset}\n"
+  printf "${c_brand}  ░██   ░██   ░██   ░██  ░██    ░██   ░██░██     ░██${c_reset}\n"
+  printf "${c_brand}  ░██    ░██ ░██     ░██ ░██    ░██  ░██  ░██    ░██${c_reset}\n"
+  printf "${c_brand}  ░██    ░██ ░██     ░██ ░██    ░██ ░█████████   ░██${c_reset}\n"
+  printf "${c_brand}  ░██    ░██ ░██     ░██  ░██  ░██  ░██    ░██   ░██${c_reset}\n"
+  printf "${c_brand}  ░██   ░██   ░██   ░██    ░██░██   ░██    ░██   ░██${c_reset}\n"
+  printf "${c_brand}  ░███████     ░██████      ░███    ░██    ░██ ░██████${c_reset}\n"
+  printf "\n"
+  printf "${c_dim}  home: %s${c_reset}\n\n" "$DOVAI_HOME"
+
+  # --- prereqs ---
+  printf "${c_bold}Prerequisites${c_reset}\n"
+  for bin in node claude; do
+    if command -v "$bin" >/dev/null 2>&1; then ok "$bin"
+    else fail "$bin missing"; fi
+  done
+  for bin in pdftotext tesseract pandoc ocrmypdf; do
+    if command -v "$bin" >/dev/null 2>&1; then ok "$bin"
+    else warn "$bin missing (optional — reduces file-type coverage)"; fi
+  done
+  if [ -d "$PROJECT_ROOT/node_modules" ]; then ok "project deps installed"
+  else fail "project deps missing — run: $PROJECT_ROOT/install.sh"; fi
+
+  # --- LM Studio (hard requirement) ---
+  printf "\n${c_bold}LM Studio${c_reset}\n"
+  LMSTUDIO_URL="http://127.0.0.1:1234"
+  PROVIDERS_MD="$DOVAI_DATA/settings/providers.md"
+  if [ -f "$PROVIDERS_MD" ]; then
+    CONFIGURED=$(node -e "
+      try {
+        const t = require('fs').readFileSync(process.argv[1],'utf8');
+        const m = t.match(/^lm_studio_url:\s*['\"]?([^'\"\n]+)['\"]?/m);
+        if (m) console.log(m[1].trim());
+      } catch {}
+    " "$PROVIDERS_MD" 2>/dev/null)
+    [ -n "$CONFIGURED" ] && LMSTUDIO_URL="$CONFIGURED"
+  fi
+  LMSTUDIO_OK=0
+  if curl -s -m 2 "$LMSTUDIO_URL/v1/models" >/dev/null 2>&1; then
+    LM_MODELS=$(curl -s -m 2 "$LMSTUDIO_URL/v1/models" | node -e "let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);const n=(j.data||[]).map(m=>m.id).join(', ');console.log(n||'');}catch{console.log('');}})" 2>/dev/null)
+    if [ -n "$LM_MODELS" ]; then
+      ok "reachable at $LMSTUDIO_URL"
+      printf "    ${c_dim}models: %s${c_reset}\n" "$LM_MODELS"
+      LMSTUDIO_OK=1
+    else
+      fail "reachable at $LMSTUDIO_URL but no model loaded"
+      printf "    ${c_dim}load a model in LM Studio, then try again${c_reset}\n"
+    fi
+  else
+    fail "not reachable at $LMSTUDIO_URL"
+    printf "    ${c_dim}Dovai requires a local LLM server — there is no fallback.${c_reset}\n"
+    printf "    ${c_dim}Start LM Studio + load a model, or edit${c_reset}\n"
+    printf "    ${c_dim}  %s${c_reset}\n" "$PROVIDERS_MD"
+    printf "    ${c_dim}to point at a reachable server (e.g. another machine on your LAN).${c_reset}\n"
+  fi
+
+  # --- LM Broker ---
+  printf "\n${c_bold}LM Broker${c_reset}\n"
+  BROKER_PID_FILE="$DOVAI_HOME/state/broker.pid"
+  BROKER_PORT_FILE="$DOVAI_HOME/state/broker.port"
+  if [ -f "$BROKER_PID_FILE" ] && [ -f "$BROKER_PORT_FILE" ]; then
+    BROKER_PID=$(cat "$BROKER_PID_FILE" 2>/dev/null)
+    BROKER_PORT=$(cat "$BROKER_PORT_FILE" 2>/dev/null)
+    if kill -0 "$BROKER_PID" 2>/dev/null; then
+      BROKER_HEALTH=$(curl -s -m 2 "http://127.0.0.1:$BROKER_PORT/health" 2>/dev/null)
+      if [ -n "$BROKER_HEALTH" ]; then
+        BROKER_QUEUE=$(printf '%s' "$BROKER_HEALTH" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);const q=j.queue||{};const parts=[];for(const[k,v]of Object.entries(q)){if(v>0)parts.push(k+':'+v);}console.log(parts.length?parts.join(', '):'empty');}catch{console.log('?');}})" 2>/dev/null)
+        BROKER_TOTAL=$(printf '%s' "$BROKER_HEALTH" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{console.log(JSON.parse(d).total_processed||0);}catch{console.log(0);}})" 2>/dev/null)
+        ok "running — pid $BROKER_PID, port $BROKER_PORT"
+        printf "    ${c_dim}queue: %s | processed: %s${c_reset}\n" "$BROKER_QUEUE" "$BROKER_TOTAL"
+      else
+        warn "pid $BROKER_PID alive but not responding on port $BROKER_PORT"
+      fi
+    else
+      warn "not running (stale pid file)"
+    fi
+  else
+    printf "  ${c_dim}not started yet — auto-starts with the first dovai server${c_reset}\n"
+  fi
+
+  # --- dovai home state ---
+  printf "\n${c_bold}Dovai Home${c_reset}\n"
+  if [ ! -d "$DOVAI_HOME" ]; then
+    warn "not initialized yet — running \`dovai\` will create $DOVAI_HOME on first start"
+    printf "\n"
+    [ "$LMSTUDIO_OK" = "1" ] && exit 0 || exit 4
+  fi
+  ok "$DOVAI_HOME initialized"
+  [ -f "$DOVAI_DATA/CLAUDE.md" ] && ok "operating manual present"
+  [ -f "$DOVAI_DATA/identity.md" ] && ok "identity file present"
+  if [ "$DOVAI_DATA" != "$DOVAI_HOME" ]; then
+    printf "    ${c_dim}data dir: %s${c_reset}\n" "$DOVAI_DATA"
+  fi
+
+  # --- domains ---
+  printf "\n${c_bold}Domains${c_reset}\n"
+  DOMAINS_JSON="$DOVAI_HOME/state/domains.json"
+  if [ -f "$DOMAINS_JSON" ]; then
+    node -e "
+      try {
+        const j = JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
+        const ds = j.domains || [];
+        if (ds.length === 0) { console.log('  (none registered)'); } else {
+          for (const d of ds) {
+            const flag = d.enabled ? '✓' : '·';
+            console.log('  ' + flag + ' ' + d.slug + ' → ' + d.root + (d.enabled ? '' : ' (disabled)'));
+          }
+        }
+      } catch { console.log('  (could not read)'); }
+    " "$DOMAINS_JSON"
+  else
+    printf "  ${c_dim}no domains registered yet${c_reset}\n"
+  fi
+
+  # --- running server ---
+  printf "\n${c_bold}Server${c_reset}\n"
+  SERVER_INFO="$DOVAI_HOME/state/server.json"
+  if [ -f "$SERVER_INFO" ]; then
+    eval "$(node -e "
+      const f=require('fs'); try {
+        const j=JSON.parse(f.readFileSync(process.argv[1],'utf8'));
+        console.log('SRV_PID='+(j.pid||''));
+        console.log('SRV_PORT='+(j.port||''));
+        console.log('SRV_URL='+(j.url||''));
+        console.log('SRV_LAN='+(j.lan_url||''));
+        console.log('SRV_STARTED='+(j.started_at||''));
+      } catch {}
+    " "$SERVER_INFO")"
+    if [ -n "$SRV_PID" ] && kill -0 "$SRV_PID" 2>/dev/null; then
+      ok "running — pid $SRV_PID since $SRV_STARTED"
+      printf "\n"
+      printf "  ${c_bold}${c_blue}Web UI${c_reset}     %s\n" "$SRV_URL"
+      printf "  ${c_bold}${c_blue}LAN${c_reset}        %s\n" "$SRV_LAN"
+      printf "  ${c_dim}stop:     dovai stop${c_reset}\n"
+      printf "  ${c_dim}restart:  dovai stop && dovai start${c_reset}\n"
+
+      # --- filing clerk progress (live from /api/status) ---
+      printf "\n${c_bold}Filing clerk${c_reset}\n"
+      STATUS_JSON=$(curl -s -m 3 "http://localhost:$SRV_PORT/api/status" 2>/dev/null)
+      if [ -n "$STATUS_JSON" ]; then
+        eval "$(printf '%s' "$STATUS_JSON" | node -e "
+          let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{
+            try {
+              const j = JSON.parse(d);
+              const p = j.compile || {};
+              console.log('FC_TOTAL='+(p.total||0));
+              console.log('FC_DONE='+(p.compiled||0));
+              console.log('FC_PENDING='+(p.pending||0));
+              console.log('FC_FAILED='+(p.failed||0));
+              console.log('FC_PCT='+(p.percent||0));
+              console.log('FC_INITIAL='+(p.initial_compile_completed?'1':'0'));
+              const s = j.setup || {};
+              console.log('SETUP_READY='+(s.ready?'1':'0'));
+              console.log('SETUP_ID='+(s.identity_configured?'1':'0'));
+              console.log('SETUP_WS='+(s.workspace_configured?'1':'0'));
+              console.log('SETUP_EMAIL='+(s.email_configured?'1':'0'));
+              console.log('SETUP_TG='+(s.telegram_configured?'1':'0'));
+            } catch {}
+          });
+        " 2>/dev/null)"
+        if [ -z "$FC_TOTAL" ] || [ "$FC_TOTAL" = "0" ]; then
+          printf "  ${c_dim}no files to index yet${c_reset}\n"
+        elif [ "$FC_INITIAL" = "1" ] && [ "$FC_PENDING" = "0" ]; then
+          ok "indexed — $FC_DONE/$FC_TOTAL files (100%)"
+          [ "$FC_FAILED" -gt 0 ] && warn "$FC_FAILED failed (see logs)"
+        else
+          warn "indexing in progress — $FC_DONE/$FC_TOTAL files (${FC_PCT}%)"
+          printf "  ${c_dim}wait for indexing to finish before asking questions${c_reset}\n"
+          [ "$FC_FAILED" -gt 0 ] && printf "  ${c_dim}$FC_FAILED failed so far${c_reset}\n"
+        fi
+
+        # --- setup wizard status ---
+        printf "\n${c_bold}Setup${c_reset}\n"
+        if [ "$SETUP_READY" = "1" ]; then
+          ok "ready — Sarah knows who she works for"
+        else
+          warn "not ready — complete the setup wizard first"
+          printf "  ${c_dim}open %s/${c_reset}\n" "$SRV_URL"
+          [ "$SETUP_ID" = "1" ] || printf "  ${c_dim}·${c_reset} identity\n"
+          [ "$SETUP_WS" = "1" ] || printf "  ${c_dim}·${c_reset} your name, email, workspace name\n"
+          if [ "$SETUP_EMAIL" != "1" ] && [ "$SETUP_TG" != "1" ]; then
+            printf "  ${c_dim}·${c_reset} at least one channel (email or telegram)\n"
+          fi
+        fi
+      else
+        printf "  ${c_dim}could not reach /api/status (server may still be starting)${c_reset}\n"
+      fi
+    else
+      warn "server.json stale (pid $SRV_PID is dead) — safe to start a fresh server"
+      printf "  ${c_dim}start: dovai start${c_reset}\n"
+    fi
+  else
+    warn "not running"
+    printf "  ${c_dim}start: dovai start${c_reset}\n"
+  fi
+
+  printf "\n"
+  [ "$LMSTUDIO_OK" = "1" ] && exit 0 || exit 4
+fi
+
+# ------- kill_dovai_orphans: find and kill all Dovai-related processes -------
+kill_dovai_orphans() {
+  local protect_pid="${1:-}"
+  local my_pid=$$
+  local killed=0
+
+  local patterns=(
+    "dovai_claude/src/index.ts"
+    "dovai_claude/src/hub/main.ts"
+    "dovai_claude/src/broker/main.ts"
+    "dovai-server"
+    "esbuild.*dovai_claude"
+  )
+
+  for pat in "${patterns[@]}"; do
+    local pids
+    pids=$(pgrep -f "$pat" 2>/dev/null) || true
+    for pid in $pids; do
+      [ "$pid" = "$my_pid" ] && continue
+      [ -n "$protect_pid" ] && [ "$pid" = "$protect_pid" ] && continue
+      [ "$pid" = "1" ] && continue
+      [ "$pid" = "$PPID" ] && continue
+      if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+        killed=$((killed + 1))
+      fi
+    done
+  done
+
+  local tmux_sessions
+  tmux_sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dovai_' || true)
+  for sess in $tmux_sessions; do
+    tmux kill-session -t "$sess" 2>/dev/null || true
+    killed=$((killed + 1))
+  done
+
+  if [ "$killed" -gt 0 ]; then
+    sleep 1
+    for pat in "${patterns[@]}"; do
+      local pids
+      pids=$(pgrep -f "$pat" 2>/dev/null) || true
+      for pid in $pids; do
+        [ "$pid" = "$my_pid" ] && continue
+        [ -n "$protect_pid" ] && [ "$pid" = "$protect_pid" ] && continue
+        [ "$pid" = "1" ] && continue
+        [ "$pid" = "$PPID" ] && continue
+        kill -9 "$pid" 2>/dev/null || true
+      done
+    done
+  fi
+
+  rm -f "$DOVAI_HOME/state/server.json" 2>/dev/null || true
+  rm -f "$DOVAI_HOME/state/server.lock" 2>/dev/null || true
+  rm -f "$DOVAI_HOME/state/broker.pid" 2>/dev/null || true
+  rm -f "$DOVAI_HOME/state/broker.port" 2>/dev/null || true
+
+  echo "$killed"
+}
+
+# ------- cleanup subcommand -------
+if [ "${1:-}" = "cleanup" ]; then
+  printf "Searching for orphaned Dovai processes…\n"
+  count=$(kill_dovai_orphans)
+  if [ "$count" -gt 0 ]; then
+    printf "Killed %s orphaned process(es).\n" "$count"
+  else
+    printf "No orphaned processes found.\n"
+  fi
+  exit 0
+fi
+
+# ------- migrate subcommand -------
+# Moves user content out of ~/.dovai/ into a user-chosen folder (typically
+# Drive/iCloud synced) and writes the data_dir pointer. See
+# docs/PLAN_DATA_DIR_SPLIT.md for the full design.
+if [ "${1:-}" = "migrate" ]; then
+  shift
+  # Ensure deps (tsx) are available
+  if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
+    "$PROJECT_ROOT/install.sh" --yes
+  fi
+  TSX_BIN="$PROJECT_ROOT/node_modules/.bin/tsx"
+  if [ ! -x "$TSX_BIN" ]; then
+    "$PROJECT_ROOT/install.sh" --yes
+  fi
+  exec "$TSX_BIN" "$PROJECT_ROOT/src/cli/migrate.ts" "$@"
+fi
+
+# ------- stop subcommand -------
+if [ "${1:-}" = "stop" ]; then
+  SERVER_INFO="$DOVAI_HOME/state/server.json"
+  if [ -f "$SERVER_INFO" ]; then
+    PID=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).pid||'')}catch{}" "$SERVER_INFO")
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+      printf "Stopping server pid %s…\n" "$PID"
+      kill "$PID"
+      for _ in 1 2 3 4 5; do
+        sleep 1
+        kill -0 "$PID" 2>/dev/null || break
+      done
+      if kill -0 "$PID" 2>/dev/null; then
+        printf "Still alive after 5s — escalating to SIGKILL\n"
+        kill -9 "$PID" 2>/dev/null || true
+      fi
+    fi
+  fi
+  count=$(kill_dovai_orphans)
+  if [ "$count" -gt 0 ]; then
+    printf "Cleaned up %s orphaned process(es).\n" "$count"
+  fi
+  printf "Stopped.\n"
+  exit 0
+fi
+
+# ===================================================================
+# is_server_running — check if a dovai server is already up
+# ===================================================================
+is_server_running() {
+  local info="$DOVAI_HOME/state/server.json"
+  [ -f "$info" ] || return 1
+  local pid
+  pid=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).pid||'')}catch{}" "$info" 2>/dev/null)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# ===================================================================
+# start_server_daemon — install deps, kill orphans, daemonise, poll
+# Returns 0 on success, 1 on failure, 3 if already running.
+# ===================================================================
+start_server_daemon() {
+  local server_args=("$@")
+
+  # Already running?
+  if is_server_running; then
+    local existing_url
+    existing_url=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).url||'')}catch{}" "$DOVAI_HOME/state/server.json" 2>/dev/null)
+    printf "\033[32m✓\033[0m Server already running — %s\n" "$existing_url"
+    return 3
+  fi
+
+  # Auto-install if needed
+  if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
+    printf "\033[33m!\033[0m node_modules missing — running install.sh first…\n"
+    "$PROJECT_ROOT/install.sh" --yes
+    printf "\n"
+  fi
+
+  TSX_BIN="$PROJECT_ROOT/node_modules/.bin/tsx"
+  if [ ! -x "$TSX_BIN" ]; then
+    printf "\033[31m✗\033[0m tsx not found — reinstalling deps…\n"
+    "$PROJECT_ROOT/install.sh" --yes
+  fi
+
+  # Kill orphans
+  local orphan_count
+  orphan_count=$(kill_dovai_orphans)
+  if [ "$orphan_count" -gt 0 ]; then
+    printf "\033[33m!\033[0m cleaned up %s orphaned process(es)\n" "$orphan_count"
+  fi
+
+  # Daemonise
+  local c_reset="\033[0m" c_bold="\033[1m" c_dim="\033[2m"
+  local c_green="\033[32m" c_yellow="\033[33m" c_red="\033[31m"
+
+  local LOG_DIR="$DOVAI_HOME/logs"
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  local LOG_FILE="$LOG_DIR/server.log"
+  local SERVER_INFO_FILE="$DOVAI_HOME/state/server.json"
+
+  read_mtime() {
+    if [ -f "$1" ]; then
+      stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+    else
+      echo 0
+    fi
+  }
+  local OLD_MTIME
+  OLD_MTIME=$(read_mtime "$SERVER_INFO_FILE")
+
+  printf "\n==== dovai start %s ====\n" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_FILE" 2>/dev/null || true
+
+  nohup "$TSX_BIN" "$PROJECT_ROOT/src/index.ts" "${server_args[@]}" \
+    >>"$LOG_FILE" 2>&1 </dev/null &
+  local DAEMON_PID=$!
+  disown "$DAEMON_PID" 2>/dev/null || disown 2>/dev/null || true
+
+  printf "${c_dim}starting dovai-server (pid $DAEMON_PID)…${c_reset}\n"
+
+  # Poll for up to 15 seconds
+  local READY=0
+  for i in $(seq 1 30); do
+    if [ -f "$SERVER_INFO_FILE" ]; then
+      local NEW_MTIME
+      NEW_MTIME=$(read_mtime "$SERVER_INFO_FILE")
+      if [ "$NEW_MTIME" != "$OLD_MTIME" ] && [ "$NEW_MTIME" != "0" ]; then
+        READY=1
+        break
+      fi
+    fi
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+      printf "\n${c_red}✗${c_reset} server failed to start\n\n"
+      printf "${c_dim}last 30 lines of %s:${c_reset}\n" "$LOG_FILE"
+      tail -30 "$LOG_FILE" 2>/dev/null | sed 's/^/  /'
+      printf "\n"
+      return 1
+    fi
+    sleep 0.5
+  done
+
+  if [ "$READY" != "1" ]; then
+    printf "\n${c_yellow}!${c_reset} server didn't confirm readiness within 15s\n"
+    printf "${c_dim}it may still be starting — check ${c_reset}dovai status${c_dim} in a moment${c_reset}\n"
+    printf "${c_dim}log: %s${c_reset}\n\n" "$LOG_FILE"
+    return 0
+  fi
+
+  # Success — print banner
+  eval "$(node -e "
+    try {
+      const j = JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
+      const esc = (s) => String(s||'').replace(/'/g, \"'\\\\''\");
+      console.log(\"SRV_URL='\" + esc(j.url) + \"'\");
+      console.log(\"SRV_LAN='\" + esc(j.lan_url) + \"'\");
+      console.log(\"SRV_PID='\" + esc(j.pid) + \"'\");
+      console.log(\"SRV_PORT='\" + esc(j.port) + \"'\");
+    } catch {}
+  " "$SERVER_INFO_FILE")"
+
+  printf "\n${c_green}✓${c_reset} ${c_bold}dovai-server is running${c_reset}\n\n"
+  printf "  ${c_bold}Web UI${c_reset}  %s\n" "$SRV_URL"
+  printf "  ${c_bold}LAN${c_reset}     %s\n" "$SRV_LAN"
+  printf "  ${c_bold}PID${c_reset}     %s\n" "$SRV_PID"
+  printf "  ${c_dim}log${c_reset}     %s\n" "$LOG_FILE"
+  printf "\n"
+
+  return 0
+}
+
+# ------- start subcommand (server daemon only) -------
+if [ "${1:-}" = "start" ]; then
+  shift
+  start_server_daemon "$@"
+  rc=$?
+  if [ "$rc" = "0" ] || [ "$rc" = "3" ]; then
+    printf "  ${c_dim:-\033[2m}stop:${c_reset:-\033[0m}    dovai stop\n"
+    printf "  ${c_dim:-\033[2m}status:${c_reset:-\033[0m}  dovai status\n"
+    printf "\n"
+    printf "${c_dim:-\033[2m}The server is a real daemon — it keeps running after you close this\n"
+    printf "terminal. Run 'dovai stop' when you want to stop it.${c_reset:-\033[0m}\n\n"
+    exit 0
+  fi
+  exit "$rc"
+fi
+
+# ------- --new-window (open a new Terminal.app window) -------
+if [ "${1:-}" = "--new-window" ]; then
+  REAL_SCRIPT_PATH="$SCRIPT_DIR/$(basename "$SCRIPT_PATH")"
+  ESCAPED_SCRIPT=$(printf "%s" "$REAL_SCRIPT_PATH" | sed "s/'/'\\\\''/g")
+  /usr/bin/osascript <<EOF
+tell application "Terminal"
+  activate
+  do script "'${ESCAPED_SCRIPT}'"
+end tell
+EOF
+  exit 0
+fi
+
+# ------- catch-all: flags like --port go to server start -------
+if [ $# -gt 0 ]; then
+  start_server_daemon "$@"
+  exit $?
+fi
+
+# ===================================================================
+# DEFAULT (no args): launch full session — start server + AI CLI
+# ===================================================================
+mkdir -p "$DOVAI_HOME" 2>/dev/null || true
+cd "$DOVAI_HOME"
+
+# Start server if not already running
+if is_server_running; then
+  printf "Server already running.\n\n"
+else
+  printf "Starting Dovai server…\n"
+  start_server_daemon || {
+    start_rc=$?
+    case $start_rc in
+      3) ;; # already running — fine
+      4) printf "\n⚠  LM Studio not reachable — server started without it.\n   Start LM Studio and load a model, then tell Sarah.\n\n" ;;
+      *) printf "\n⚠  Server start returned exit %s — continuing to CLI.\n\n" "$start_rc" ;;
+    esac
+  }
+fi
+
+# Detect which AI CLI to use (defaults to "claude").
+AI_CLI="claude"
+WS_SETTINGS="$DOVAI_DATA/settings/workspace.md"
+if [ -f "$WS_SETTINGS" ]; then
+  PARSED=$(grep '^ai_cli:' "$WS_SETTINGS" | head -1 | sed 's/^ai_cli:[[:space:]]*//' | tr -d '"' | tr -d "'")
+  [ -n "$PARSED" ] && AI_CLI="$PARSED"
+fi
+
+printf "Launching %s…\n\n" "$AI_CLI"
+
+# Build the initial prompt. If a conversation log exists, inject it so
+# the CLI session has full cross-channel context from the start. This
+# is what makes Sarah feel like one person regardless of whether you
+# last talked to her on Telegram, email, or the CLI.
+CONV_LOG="$DOVAI_DATA/state/conversation_log.md"
+if [ -f "$CONV_LOG" ] && [ -s "$CONV_LOG" ]; then
+  INITIAL_PROMPT="$(cat "$CONV_LOG")
+
+---
+
+The above is your recent conversation history across ALL channels (Telegram, email, CLI). This is ONE continuous conversation with the user. Maintain full continuity — if they reference something discussed on Telegram or email, you know about it. Now run: status"
+else
+  INITIAL_PROMPT="status"
+fi
+
+case "$AI_CLI" in
+  gemini)
+    GEMINI_MODEL="${DOVAI_GEMINI_MODEL:-}"
+    GEMINI_FLAGS="--approval-mode=yolo"
+    [ -n "$GEMINI_MODEL" ] && GEMINI_FLAGS="${GEMINI_FLAGS} -m ${GEMINI_MODEL}"
+    exec gemini ${GEMINI_FLAGS} -i "$INITIAL_PROMPT"
+    ;;
+  *)
+    CLAUDE_MODEL="claude-opus-4-7"
+    CLAUDE_FLAGS="--dangerously-skip-permissions --model ${CLAUDE_MODEL}"
+    exec claude ${CLAUDE_FLAGS} "$INITIAL_PROMPT"
+    ;;
+esac

@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Entry point for dovai-server.
+# Resolves the project root from this script's location so it works when moved.
+
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+exec "$(which node)" --import tsx "$PROJECT_ROOT/src/index.ts" "$@"

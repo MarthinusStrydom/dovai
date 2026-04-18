@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cdovai — legacy alias, now just calls dovai.
+# Kept for backward compatibility. Use `dovai` directly.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/dovai" "$@"

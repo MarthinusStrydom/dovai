@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+
+# Environment
+.env
+.env.*
+.env.local
+
+# Local Dovai workspace (state dir — never committed). User content lives
+# in a separate data dir picked at setup. See:
+#   dovai_claude/docs/PLAN_DATA_DIR_SPLIT.md
+.dovai/
+
+# Claude Code local artifacts
+.claude/
+
+# Internal / private
+marketing/
+archive/
+
+# Node artifacts (in case anyone runs npm at the repo root by mistake)
+node_modules/
+dist/
+*.log

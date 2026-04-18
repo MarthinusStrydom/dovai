@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Dovai</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <!-- SETUP WIZARD OVERLAY -->
+    <!-- Shown whenever /api/status reports setup.ready === false. Blocks every
+         other tab until the minimum-viable configuration is saved. -->
+    <div id="wizard-overlay" class="wizard-overlay hidden" aria-hidden="true">
+      <div class="wizard-card">
+        <div class="wizard-head">
+          <h2 id="wizard-title">Set up your workspace</h2>
+          <div id="wizard-progress" class="wizard-progress">Step 1 of 5</div>
+        </div>
+
+        <p class="wizard-intro" id="wizard-intro">
+          Sarah can't start working until you've told her who she works for
+          and given her at least one way to send messages. This will take a
+          couple of minutes.
+        </p>
+
+        <!-- STEP 0: data folder (appears only when the data-dir pointer
+             has not yet been written — i.e. very first run) -->
+        <div class="wizard-step hidden" data-step="0">
+          <h3>Where should Dovai keep your files?</h3>
+          <p class="muted small">
+            Sarah's work — contacts, SOPs, tasks, drafts, email corpus,
+            settings and secrets — will all live in this folder. Point it
+            at a Drive/iCloud-synced folder and everything automatically
+            backs up and syncs across machines.
+          </p>
+          <div id="wiz-data-suggestions">Loading suggested folders…</div>
+          <label style="margin-top: 1em;">Custom path
+            <input id="wiz-data-custom" placeholder="/Users/you/Somewhere/Dovai" />
+          </label>
+          <p class="muted small" id="wiz-data-hint">
+            Tip: the folder will be created for you. If you pick an existing
+            folder, it must be empty.
+          </p>
+          <div id="wiz-data-restart-banner" class="hidden"
+               style="margin-top: 1em; padding: 0.75em; background: #fffbe0; border: 1px solid #e6d98a; border-radius: 6px;">
+            <strong>Restart Dovai now</strong> — run
+            <code>dovai stop &amp;&amp; dovai start</code>, then reload this
+            page to continue setup. (The running server has the old paths
+            cached; a restart picks up your chosen folder.)
+          </div>
+        </div>
+
+        <!-- STEP 1: identity -->
+        <div class="wizard-step" data-step="1">
+          <h3>Who Sarah works for</h3>
+          <p class="muted small">
+            Free-form description of your organisation, the people, and any
+            background Sarah should always know. This becomes her
+            <code>identity.md</code>.
+          </p>
+          <textarea id="wiz-identity" rows="14" placeholder="Loading template…"></textarea>
+        </div>
+
+        <!-- STEP 2: workspace -->
+        <div class="wizard-step hidden" data-step="2">
+          <h3>About you</h3>
+          <label>Workspace name<input id="wiz-workspace-name" placeholder="e.g. Acme Trust" /></label>
+          <label>Your name<input id="wiz-user-name" placeholder="Jane Doe" /></label>
+          <label>Your email<input id="wiz-user-email" type="email" placeholder="jane@example.org" /></label>
+          <label>AI name<input id="wiz-ai-name" placeholder="Sarah" /></label>
+          <label>AI job title<input id="wiz-ai-job" placeholder="Manager" /></label>
+        </div>
+
+        <!-- STEP 3: email channel -->
+        <div class="wizard-step hidden" data-step="3">
+          <h3>Email channel (optional)</h3>
+          <p class="muted small">
+            IMAP lets Sarah read incoming mail, SMTP lets her send. Leave
+            blank and click Skip if you only use Telegram.
+          </p>
+          <label>IMAP host<input id="wiz-imap-host" placeholder="imap.example.org" /></label>
+          <label>IMAP port<input id="wiz-imap-port" type="number" value="993" /></label>
+          <label>IMAP user<input id="wiz-imap-user" /></label>
+          <label>IMAP password<input id="wiz-imap-pass" type="password" /></label>
+          <label>SMTP host<input id="wiz-smtp-host" placeholder="smtp.example.org" /></label>
+          <label>SMTP port<input id="wiz-smtp-port" type="number" value="587" /></label>
+          <label>SMTP user<input id="wiz-smtp-user" /></label>
+          <label>SMTP password<input id="wiz-smtp-pass" type="password" /></label>
+          <label>From address<input id="wiz-smtp-from" placeholder="Sarah &lt;sarah@example.org&gt;" /></label>
+        </div>
+
+        <!-- STEP 4: telegram channel -->
+        <div class="wizard-step hidden" data-step="4">
+          <h3>Telegram channel (optional)</h3>
+          <p class="muted small">
+            Paste a BotFather token. Leave blank and click Skip if you're
+            only using email.
+          </p>
+          <label>Bot token<input id="wiz-tg-token" type="password" /></label>
+          <label>Allowed chat IDs (comma-sep, blank = anyone)<input id="wiz-tg-allowed" /></label>
+          <label>Default chat ID<input id="wiz-tg-default" /></label>
+        </div>
+
+        <!-- STEP 5: wakes -->
+        <div class="wizard-step hidden" data-step="5">
+          <h3>Wake schedule (optional)</h3>
+          <p class="muted small">
+            Cron expressions (one per line) — when Sarah should proactively
+            wake up to check for work. You can leave this blank; she will
+            still respond to incoming messages and your approvals.
+          </p>
+          <textarea id="wiz-wakes" rows="4" placeholder="0 8 * * *&#10;0 17 * * *"></textarea>
+        </div>
+
+        <div class="wizard-error hidden" id="wizard-error"></div>
+
+        <div class="wizard-foot">
+          <button id="wiz-back" class="secondary" disabled>Back</button>
+          <button id="wiz-skip" class="secondary hidden">Skip</button>
+          <button id="wiz-next" class="primary">Next</button>
+        </div>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◆</span>
+        <span class="title">Dovai</span>
+      </div>
+      <div class="topbar-right">
+        <select id="domain-filter" class="domain-select" title="Filter by domain">
+          <option value="">All domains</option>
+        </select>
+        <div class="status-pill" id="status-pill">…</div>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button data-tab="home" class="active">Home</button>
+      <button data-tab="approvals">Approvals</button>
+      <button data-tab="tasks">Tasks</button>
+      <button data-tab="sops">SOPs</button>
+      <button data-tab="settings">Settings</button>
+      <button data-tab="logs">Logs</button>
+    </nav>
+
+    <main>
+      <!-- HOME -->
+      <section id="tab-home" class="tab active">
+        <div id="failures-banner" class="card err-card hidden">
+          <h2>⚠ Messages failed to send</h2>
+          <div id="failures-summary" class="small"></div>
+          <div id="failures-list" class="list" style="margin-top:12px;"></div>
+        </div>
+
+        <div id="setup-banner" class="card warn-card hidden">
+          <h2>Setup incomplete</h2>
+          <div id="setup-missing" class="muted small"></div>
+          <div class="btn-row">
+            <button id="btn-open-wizard" class="primary">Complete setup</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Compile status</h2>
+          <div class="progress-wrap">
+            <div class="progress"><div id="compile-bar" class="bar"></div></div>
+            <div id="compile-text" class="progress-text">loading…</div>
+          </div>
+          <div id="compile-detail" class="muted small"></div>
+        </div>
+
+        <div class="card">
+          <h2>Wake queue</h2>
+          <div id="wake-info" class="muted">—</div>
+        </div>
+
+        <div class="card">
+          <h2>Domains</h2>
+          <div id="domains-info" class="list"></div>
+        </div>
+      </section>
+
+      <!-- APPROVALS -->
+      <section id="tab-approvals" class="tab">
+        <div class="card">
+          <h2>Pending approvals</h2>
+          <div id="drafts-list" class="list">loading…</div>
+        </div>
+      </section>
+
+      <!-- TASKS -->
+      <section id="tab-tasks" class="tab">
+        <div class="card">
+          <h2>Active tasks</h2>
+          <div id="tasks-active" class="list">loading…</div>
+        </div>
+        <div class="card">
+          <h2>Done</h2>
+          <div id="tasks-done" class="list">loading…</div>
+        </div>
+      </section>
+
+      <!-- SOPs -->
+      <section id="tab-sops" class="tab">
+        <div class="card">
+          <h2>Standard operating procedures</h2>
+          <div class="btn-row">
+            <button id="btn-new-sop" class="primary">New SOP</button>
+          </div>
+          <div id="sops-list" class="list">loading…</div>
+        </div>
+        <div class="card hidden" id="sop-editor-card">
+          <h2 id="sop-editor-title">Edit SOP</h2>
+          <input id="sop-editor-id" type="text" placeholder="sop-id (e.g. agm_matters_outstanding)" />
+          <textarea id="sop-editor-body" rows="20" placeholder="SOP markdown with frontmatter…"></textarea>
+          <div class="btn-row">
+            <button id="btn-save-sop" class="primary">Save</button>
+            <button id="btn-cancel-sop">Cancel</button>
+            <button id="btn-delete-sop" class="danger">Delete</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="tab-settings" class="tab">
+        <nav class="settings-nav" id="settings-nav">
+          <button data-stab="general" class="active">General</button>
+          <button data-stab="domains">Domains</button>
+          <button data-stab="channels">Channels</button>
+          <button data-stab="engine">AI Engine</button>
+          <button data-stab="schedule">Schedule</button>
+        </nav>
+
+        <!-- GENERAL -->
+        <div id="stab-general" class="stab active">
+          <div class="card">
+            <h2>Workspace</h2>
+            <label>Workspace name<input id="ws-name" /></label>
+            <label>Your name<input id="ws-user-name" /></label>
+            <label>Your email<input id="ws-user-email" /></label>
+            <label>AI name<input id="ws-ai-name" /></label>
+            <label>AI job title<textarea id="ws-ai-job" rows="1"></textarea></label>
+            <label>AI CLI<select id="ws-ai-cli"><option value="claude">Claude Code</option><option value="gemini">Gemini CLI</option></select></label>
+            <button class="primary" id="btn-save-workspace">Save</button>
+          </div>
+          <div class="card">
+            <h2>Identity</h2>
+            <p class="muted small">
+              Who the AI works for, their role, responsibilities, communication
+              rules, and boundaries.
+            </p>
+            <textarea id="settings-identity" rows="20" placeholder="Loading…"></textarea>
+            <button class="primary" id="btn-save-identity">Save</button>
+          </div>
+        </div>
+
+        <!-- DOMAINS -->
+        <div id="stab-domains" class="stab">
+          <div class="card">
+            <h2>Registered domains</h2>
+            <p class="muted small">
+              Each domain represents an organisation or project with its own
+              file folder. Sarah indexes each domain's files independently.
+            </p>
+            <div id="domains-settings-list" class="list"></div>
+          </div>
+          <div class="card">
+            <h2>Add new domain</h2>
+            <label>Name<input id="dom-new-name" placeholder="e.g. EHHOA" /></label>
+            <label>Slug<input id="dom-new-slug" placeholder="e.g. ehhoa (auto from name)" /></label>
+            <label>Folder path<input id="dom-new-path" placeholder="/absolute/path/to/folder" /></label>
+            <button class="primary" id="btn-add-domain">Add domain</button>
+          </div>
+        </div>
+
+        <!-- CHANNELS -->
+        <div id="stab-channels" class="stab">
+          <div class="card">
+            <h2>Email</h2>
+            <h3>Incoming (IMAP)</h3>
+            <label>Host<input id="pr-imap-host" /></label>
+            <label>Port<input id="pr-imap-port" type="number" placeholder="993" /></label>
+            <label>User<input id="pr-imap-user" /></label>
+            <label>Password<input id="pr-imap-pass" type="password" /></label>
+            <h3>Outgoing (SMTP)</h3>
+            <label>Host<input id="pr-smtp-host" /></label>
+            <label>Port<input id="pr-smtp-port" type="number" placeholder="587" /></label>
+            <label>User<input id="pr-smtp-user" /></label>
+            <label>Password<input id="pr-smtp-pass" type="password" /></label>
+            <label>From address<input id="pr-smtp-from" /></label>
+            <button class="primary" id="btn-save-email">Save email</button>
+          </div>
+          <div class="card">
+            <h2>Telegram</h2>
+            <label>Bot token<input id="pr-tg-token" type="password" /></label>
+            <label>Allowed chat IDs (comma-sep)<input id="pr-tg-allowed" /></label>
+            <label>Default chat ID<input id="pr-tg-default" /></label>
+            <button class="primary" id="btn-save-telegram">Save telegram</button>
+          </div>
+        </div>
+
+        <!-- AI ENGINE -->
+        <div id="stab-engine" class="stab">
+          <div class="card">
+            <h2>LM Studio</h2>
+            <p class="muted small">
+              Dovai uses a local LLM via LM Studio for file compilation and
+              knowledge graph extraction.
+            </p>
+            <label>URL<input id="pr-lmstudio-url" placeholder="http://127.0.0.1:1234" /></label>
+            <label>Model<input id="pr-lmstudio-model" placeholder="(auto)" /></label>
+            <button class="primary" id="btn-save-engine">Save</button>
+          </div>
+        </div>
+
+        <!-- SCHEDULE -->
+        <div id="stab-schedule" class="stab">
+          <div class="card">
+            <h2>Wake schedule</h2>
+            <p class="muted small">
+              Cron expressions (one per line) — when to wake Sarah proactively.
+            </p>
+            <textarea id="wk-times" rows="4" placeholder="0 8 * * *&#10;0 17 * * *"></textarea>
+            <button class="primary" id="btn-save-wakes">Save schedule</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PER-DOMAIN PAGE -->
+      <section id="tab-domain" class="tab">
+        <div class="btn-row" style="margin-bottom:14px;">
+          <button id="domain-back" class="secondary">&larr; Back</button>
+        </div>
+
+        <!-- Header -->
+        <div class="card" id="domain-header-card">
+          <h2 id="domain-page-name">Domain</h2>
+          <div id="domain-page-path" class="muted small"></div>
+          <div id="domain-page-size" class="muted small" style="margin-top:4px;"></div>
+        </div>
+
+        <!-- Pre-Dovai Backup -->
+        <div class="card" id="domain-backup-card">
+          <h2>Pre-Dovai Backup</h2>
+          <div id="domain-backup-body"></div>
+        </div>
+
+        <!-- Smart Folders -->
+        <div class="card" id="domain-sf-card">
+          <h2>Smart Folders</h2>
+          <div id="domain-sf-body"></div>
+        </div>
+
+        <!-- Indexing -->
+        <div class="card" id="domain-indexing-card">
+          <h2>Indexing</h2>
+          <div id="domain-indexing-body"></div>
+        </div>
+
+        <!-- Triage overrides (only shown after Smart Folders) -->
+        <div class="card hidden" id="domain-triage-card">
+          <h2>Triage Verdicts</h2>
+          <div id="domain-triage-body"></div>
+        </div>
+      </section>
+
+      <!-- LOGS -->
+      <section id="tab-logs" class="tab">
+        <div class="card">
+          <h2>Live log</h2>
+          <div class="btn-row">
+            <button id="btn-refresh-logs">Refresh</button>
+            <label class="inline">
+              <input type="checkbox" id="chk-autorefresh" /> auto
+            </label>
+          </div>
+          <pre id="logs-out" class="logs"></pre>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
