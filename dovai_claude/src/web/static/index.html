@@ -307,8 +307,10 @@
               <div id="pr-gmail-status" class="muted small" style="margin:.5em 0;">
                 Status: unknown (save settings first, then click Connect Gmail)
               </div>
-              <button class="primary" id="btn-connect-gmail">Connect Gmail</button>
-              <button class="secondary hidden" id="btn-disconnect-gmail">Disconnect</button>
+              <div class="btn-row">
+                <button class="primary" id="btn-connect-gmail">Connect Gmail</button>
+                <button class="secondary hidden" id="btn-disconnect-gmail">Disconnect</button>
+              </div>
             </div>
 
             <!-- IMAP / SMTP backend -->
@@ -326,7 +328,9 @@
               <label>From address<input id="pr-smtp-from" /></label>
             </div>
 
-            <button class="primary" id="btn-save-email">Save email settings</button>
+            <div class="btn-row" style="margin-top: 16px;">
+              <button class="primary" id="btn-save-email">Save email settings</button>
+            </div>
           </div>
           <div class="card">
             <h2>Telegram</h2>

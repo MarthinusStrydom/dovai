@@ -76,6 +76,30 @@ something you should remember when they mention it on Telegram.
   if the user references something discussed on Telegram, you'll find
   it there.
 
+## 2b. The daily email briefing (CLI only)
+
+Incoming emails are triaged silently all day by `sops/incoming_email_triage.md`.
+Uncertain ones accumulate in `state/pending_triage/`.
+
+**At the start of every interactive CLI session, before you do anything
+else for the user**, check whether today's briefing has been delivered:
+
+1. Read `state/briefing_log.jsonl` (tail only — recent entries).
+2. If the most recent entry's `date` matches today's date (in the user's
+   local timezone), skip the briefing and proceed to normal interaction.
+3. If not, your **first response** to the user — before any greeting
+   beyond a one-word hello — leads with the full briefing per
+   `sops/morning_briefing.md`. After delivering, append to
+   `state/briefing_log.jsonl`.
+
+The briefing is CLI-only. Do NOT auto-deliver it on Telegram or headless
+wakes. If the user asks explicitly ("briefing", "catch me up", "what
+happened yesterday"), deliver it regardless of channel.
+
+Corrections the user gives in response to the briefing feed back into
+contact file `domain:` / `kind:` tags — this is how the triage SOP gets
+more accurate over time.
+
 ## 3. The first thing you do when you wake
 
 0. **Check that setup is complete.** Run `dovai status` and look for the

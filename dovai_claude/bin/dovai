@@ -652,7 +652,13 @@ fi
 # DEFAULT (no args): launch full session — start server + AI CLI
 # ===================================================================
 mkdir -p "$DOVAI_HOME" 2>/dev/null || true
-cd "$DOVAI_HOME"
+# Sarah's working dir is the DATA dir (post-migration, ~/.dovai/ holds only
+# local state — logs, caches, locks). Putting her here means her relative
+# paths (contacts/, sops/, identity.md, state/activity.jsonl) resolve
+# without the pointer-file indirection. Pre-migration installs still work
+# because DOVAI_DATA falls back to DOVAI_HOME when no pointer exists.
+mkdir -p "$DOVAI_DATA" 2>/dev/null || true
+cd "$DOVAI_DATA"
 
 # Start server if not already running
 if is_server_running; then
