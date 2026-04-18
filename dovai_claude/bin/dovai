@@ -578,6 +578,28 @@ if [ $# -gt 0 ]; then
 fi
 
 # ===================================================================
+# Guard: non-interactive invocation (called from inside another AI CLI)
+# ===================================================================
+# If stdin isn't a TTY, the caller is almost certainly another process's
+# shell tool (Claude Code's Bash tool, Gemini CLI's shell, a CI job, a
+# background script). The full-session launcher below would exec an
+# interactive AI CLI as a child — useless in that context and produces
+# a nested TUI inside the caller's output buffer. Refuse the spawn and
+# fall through to server-only mode with a clear pointer.
+if ! [ -t 0 ]; then
+  printf "\033[33m!\033[0m  Non-interactive invocation detected (stdin is not a TTY).\n"
+  printf "   Bare \`dovai\` launches the full session (server + AI CLI),\n"
+  printf "   which needs a real terminal. Starting just the server.\n\n"
+  printf "   Use explicit subcommands instead when you don't want an\n"
+  printf "   interactive AI CLI spawned:\n"
+  printf "     dovai start     — start the server daemon\n"
+  printf "     dovai stop      — stop it\n"
+  printf "     dovai status    — health + pre-flight\n\n"
+  start_server_daemon
+  exit $?
+fi
+
+# ===================================================================
 # DEFAULT (no args): launch full session — start server + AI CLI
 # ===================================================================
 mkdir -p "$DOVAI_HOME" 2>/dev/null || true
