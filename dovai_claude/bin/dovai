@@ -578,23 +578,72 @@ if [ $# -gt 0 ]; then
 fi
 
 # ===================================================================
-# Guard: non-interactive invocation (called from inside another AI CLI)
+# Guard: invoked from inside another AI CLI's shell tool
 # ===================================================================
-# If stdin isn't a TTY, the caller is almost certainly another process's
-# shell tool (Claude Code's Bash tool, Gemini CLI's shell, a CI job, a
-# background script). The full-session launcher below would exec an
-# interactive AI CLI as a child — useless in that context and produces
-# a nested TUI inside the caller's output buffer. Refuse the spawn and
-# fall through to server-only mode with a clear pointer.
-if ! [ -t 0 ]; then
-  printf "\033[33m!\033[0m  Non-interactive invocation detected (stdin is not a TTY).\n"
-  printf "   Bare \`dovai\` launches the full session (server + AI CLI),\n"
-  printf "   which needs a real terminal. Starting just the server.\n\n"
-  printf "   Use explicit subcommands instead when you don't want an\n"
-  printf "   interactive AI CLI spawned:\n"
-  printf "     dovai start     — start the server daemon\n"
-  printf "     dovai stop      — stop it\n"
-  printf "     dovai status    — health + pre-flight\n\n"
+# When an AI CLI (Claude Code, Gemini CLI, etc.) runs `dovai` via its
+# shell tool, the full-session launcher below would exec an interactive
+# AI CLI as a child of that shell tool — producing a nested TUI inside
+# the caller's output buffer. We can't rely on `tty -s` alone because
+# modern AI CLIs allocate a pseudoterminal for their shell tools, so
+# stdin *looks* like a TTY. Instead:
+#
+#   1. Check for env vars known to be set by AI CLIs
+#   2. Walk the process tree for ancestors named claude / gemini / etc.
+#
+# Either signal → refuse the AI-CLI spawn, fall through to server-only
+# mode, and print an explanation so the calling AI can tell the user.
+is_ai_cli_ancestor() {
+  # Fast path: env vars set by known AI CLIs
+  [ -n "${CLAUDECODE:-}" ] && return 0
+  [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ] && return 0
+  [ -n "${CLAUDE_CODE_EXECPATH:-}" ] && return 0
+  [ -n "${GEMINI_CLI_SESSION:-}" ] && return 0
+  [ -n "${GEMINI_CLI:-}" ] && return 0
+  [ -n "${GOOGLE_GENAI_CLI:-}" ] && return 0
+
+  # Process-tree walk — catches cases where env vars aren't set.
+  # Both `comm` (binary name) and `args` (full command line) are checked
+  # because Node-based CLIs (Gemini CLI especially) often appear in ps
+  # as `node` with the package path in args.
+  local pid=${PPID:-0} depth=0
+  while [ "$pid" -gt 1 ] && [ "$depth" -lt 12 ]; do
+    local comm args
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | awk '{print $1}' | sed 's|.*/||')
+    args=$(ps -o args= -p "$pid" 2>/dev/null)
+
+    # Match by binary name
+    case "$comm" in
+      claude|claude-code|gemini|gemini-cli)
+        return 0 ;;
+    esac
+    # Match by npm-package path in args (catches node-wrapped CLIs)
+    case "$args" in
+      *@anthropic-ai/claude-code*|\
+      *@google/gemini-cli*|\
+      *@google-gemini/*|\
+      *gemini-cli/dist*|\
+      *claude-code/cli*)
+        return 0 ;;
+    esac
+
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -z "$pid" ] && break
+    depth=$((depth + 1))
+  done
+
+  return 1
+}
+
+if is_ai_cli_ancestor; then
+  printf "\033[33m!\033[0m  Detected this command was invoked from inside an AI CLI\n"
+  printf "   (Claude Code, Gemini CLI, etc). Bare \`dovai\` would spawn another\n"
+  printf "   interactive AI CLI as a child of your shell tool — a nested TUI\n"
+  printf "   that isn't what you or the user want. Starting just the server.\n\n"
+  printf "   Tell the user: the Dovai server is running. Use these explicit\n"
+  printf "   commands going forward:\n"
+  printf "     dovai start    — start the server daemon\n"
+  printf "     dovai stop     — stop it\n"
+  printf "     dovai status   — health + pre-flight\n\n"
   start_server_daemon
   exit $?
 fi
