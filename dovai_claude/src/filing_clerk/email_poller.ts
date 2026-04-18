@@ -199,12 +199,23 @@ export class EmailPoller {
 
     let newMessageIds: string[];
     let newestHistoryId: string | null = null;
+    /**
+     * Bootstrap runs enqueue emails to disk for context but do NOT fire
+     * wake events per message. Triggering 100 wakes on first connect would
+     * block Sarah for ~25 min processing historical mail that the user
+     * has already dealt with. Incremental runs (lastHistoryId set) do
+     * enqueue wakes as normal.
+     */
+    let enqueueWakes = true;
 
     if (!lastHistoryId) {
       // Bootstrap: first run. Fetch only recent messages so we don't
       // process years of backlog, and record the current historyId to
       // anchor future incremental polls.
-      this.logger.info("gmail bootstrap: fetching recent messages", { q: GMAIL_BOOTSTRAP_QUERY });
+      this.logger.info("gmail bootstrap: fetching recent messages (no wake events will fire)", {
+        q: GMAIL_BOOTSTRAP_QUERY,
+      });
+      enqueueWakes = false;
       const listed = await gmail.users.messages.list({
         userId: "me",
         q: GMAIL_BOOTSTRAP_QUERY,
@@ -269,12 +280,14 @@ export class EmailPoller {
           },
         );
 
-        await enqueueWake(this.gp, {
-          source: "email",
-          from: fromAddr,
-          subject,
-          folder: folderName,
-        });
+        if (enqueueWakes) {
+          await enqueueWake(this.gp, {
+            source: "email",
+            from: fromAddr,
+            subject,
+            folder: folderName,
+          });
+        }
       } catch (err) {
         this.logger.error("failed fetching gmail message", {
           messageId,
