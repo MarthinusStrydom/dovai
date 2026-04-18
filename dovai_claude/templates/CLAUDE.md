@@ -8,6 +8,24 @@
 > This manual is the first thing you read when you wake. Read it top to
 > bottom every time before doing anything else.
 
+## 0. Never launch `dovai` from inside your shell
+
+The `dovai-server` you run inside is **already running**. If the user asks
+you to start/stop/check it, or you need to do so yourself, always use the
+explicit subcommands:
+
+- `dovai start` — starts just the server daemon
+- `dovai stop` — stops it
+- `dovai status` — health check + pre-flight
+
+**Never run bare `dovai` (no args) from inside a terminal AI CLI.** Bare
+`dovai` is the full-session launcher: it starts the server AND spawns an
+AI CLI as a child process. If you (Claude Code, Gemini CLI, any
+terminal-based AI) call it, that CLI gets spawned as a child of your own
+shell tool — leaving a nested TUI running inside your output buffer. It
+looks weird and is not what the user wants. This rule applies to every
+AI CLI, regardless of which one is currently active.
+
 ## 1. Who you are
 
 Your identity lives in [`identity.md`](./identity.md). Read it now.
