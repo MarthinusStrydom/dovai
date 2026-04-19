@@ -1773,6 +1773,12 @@ function renderPresetDropdown() {
   }
   // If current chat has a preset, select it
   if (chatState.currentMeta?.preset) sel.value = chatState.currentMeta.preset;
+  updateDeletePresetVisibility();
+}
+
+function updateDeletePresetVisibility() {
+  const hasSelection = !!$("#chat-preset")?.value;
+  $("#chat-delete-preset")?.classList.toggle("hidden", !hasSelection);
 }
 
 function renderModelDropdown() {
@@ -2144,6 +2150,23 @@ $("#chat-edit-preset")?.addEventListener("click", () => {
 });
 $("#chat-new-preset")?.addEventListener("click", () => {
   openPresetEditor(null);
+});
+$("#chat-preset")?.addEventListener("change", updateDeletePresetVisibility);
+$("#chat-delete-preset")?.addEventListener("click", async () => {
+  const slug = $("#chat-preset").value;
+  if (!slug) return;
+  const preset = chatState.presets.find((p) => p.slug === slug);
+  const label = preset?.name || slug;
+  if (!confirm(`Delete preset "${label}"? Chats already using it keep their snapshot of the prompt, so existing conversations are unaffected.`)) return;
+  try {
+    await api("DELETE", "/api/playground/presets/" + encodeURIComponent(slug));
+    flash(`Deleted preset: ${label}`);
+    await loadChatTab();
+    $("#chat-preset").value = "";
+    updateDeletePresetVisibility();
+  } catch (err) {
+    alert("Could not delete preset: " + err.message);
+  }
 });
 $("#chat-preset-cancel")?.addEventListener("click", closePresetEditor);
 $("#chat-preset-save")?.addEventListener("click", savePresetFromEditor);
