@@ -1,24 +1,36 @@
 /**
  * Playground storage — user's private chat space.
  *
- * Entirely separate from Sarah's world. Lives under `<dataRoot>/playground/`,
+ * Entirely separate from Sarah's world. Lives under `<playgroundRoot>/`,
  * which is not scanned by the filing clerk, not ingested into the knowledge
  * graph, and explicitly off-limits to Sarah per her operator manual.
+ *
+ * Core concepts:
+ *
+ *   **Character** (formerly "preset") — an isolated AI agent with its own
+ *   voice (system prompt), model, optional Telegram bot, and its own
+ *   memory namespace. Memories learned in chats with one character never
+ *   leak into another character's profile.
+ *
+ *   **Chat** — a conversation. Each chat is bound to at most one character
+ *   (snapshot at creation time). Chats without a character route memory
+ *   to a shared "_shared" namespace.
  *
  * Layout:
  *
  *   playground/
- *     presets/
- *       <slug>.md                — markdown + frontmatter per preset
+ *     characters/
+ *       <slug>.md                — character definition (md + frontmatter)
  *     chats/
  *       <id>/
- *         meta.json              — {title, created_at, updated_at, preset, model}
- *         messages.jsonl         — one JSON per message (see ChatMessage)
- *         images/
- *           <filename>           — uploaded images referenced by messages
- *
- * Chat IDs are timestamp-prefixed slugs so they sort chronologically
- * in a directory listing. Example: `2026-04-19T094512_book_chapter_3`.
+ *         meta.json              — title, timestamps, character slug, model
+ *         messages.jsonl         — one JSON per message
+ *         images/<filename>      — uploaded images
+ *     learned/
+ *       <character_slug>/        — per-character memory namespace
+ *         memories.jsonl
+ *       _shared/                 — memory for no-character chats
+ *         memories.jsonl
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -27,44 +39,100 @@ import matter from "gray-matter";
 import type { GlobalPaths } from "./global_paths.ts";
 
 // ---------------------------------------------------------------------------
-// Presets
+// One-time migration from v1 layout (preset-based) to v2 (character-based)
 // ---------------------------------------------------------------------------
 
-export interface PresetFrontmatter {
+/**
+ * Run once on server startup. Renames v1 folders/files in place if v2
+ * doesn't already exist. Idempotent — safe to call repeatedly.
+ */
+export function migrateV1ToV2(gp: GlobalPaths): void {
+  const playground = gp.playground;
+  // 1) presets/ → characters/
+  // `characters/` may already exist as an empty dir from `initGlobalDovai`
+  // scaffolding, so we can't just "rename if target missing". Instead:
+  //   - if characters/ is empty → move all files in from presets/ and drop presets/
+  //   - if characters/ already has contents → leave presets/ alone
+  //     (user has started using the new location; don't clobber)
+  const oldPresets = path.join(playground, "presets");
+  const newCharacters = gp.playgroundCharacters;
+  if (fs.existsSync(oldPresets)) {
+    const newIsEmpty =
+      !fs.existsSync(newCharacters) ||
+      fs.readdirSync(newCharacters).filter((f) => !f.startsWith(".")).length === 0;
+    if (newIsEmpty) {
+      fs.mkdirSync(newCharacters, { recursive: true });
+      for (const entry of fs.readdirSync(oldPresets)) {
+        try {
+          fs.renameSync(path.join(oldPresets, entry), path.join(newCharacters, entry));
+        } catch {
+          // fall through
+        }
+      }
+      // Remove the now-empty old dir
+      try { fs.rmdirSync(oldPresets); } catch { /* ignore */ }
+    }
+  }
+  // 2) learned/memories.jsonl → learned/_shared/memories.jsonl
+  const learnedRoot = path.join(playground, "learned");
+  const oldFlatFile = path.join(learnedRoot, "memories.jsonl");
+  const sharedDir = path.join(learnedRoot, "_shared");
+  const sharedFile = path.join(sharedDir, "memories.jsonl");
+  if (fs.existsSync(oldFlatFile) && !fs.existsSync(sharedFile)) {
+    try {
+      fs.mkdirSync(sharedDir, { recursive: true });
+      fs.renameSync(oldFlatFile, sharedFile);
+    } catch {
+      // fall through
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Characters (formerly "Presets")
+// ---------------------------------------------------------------------------
+
+export interface CharacterFrontmatter {
   name: string;
   model: string;
   temperature?: number;
   max_tokens?: number;
+  /**
+   * Optional Telegram Bot token. If set, a bot is launched for this
+   * character and will accept messages from any DM (the bot's name is
+   * your gate; if you want tighter auth, keep the name private).
+   */
+  telegram_bot_token?: string;
 }
 
-export interface Preset extends PresetFrontmatter {
+export interface Character extends CharacterFrontmatter {
   slug: string;
   /** The markdown body is the system prompt. */
   system_prompt: string;
 }
 
-function presetPath(gp: GlobalPaths, slug: string): string {
-  return path.join(gp.playgroundPresets, `${slug}.md`);
+function characterPath(gp: GlobalPaths, slug: string): string {
+  return path.join(gp.playgroundCharacters, `${slug}.md`);
 }
 
-export function listPresets(gp: GlobalPaths): Preset[] {
+export function listCharacters(gp: GlobalPaths): Character[] {
   try {
     const files = fs
-      .readdirSync(gp.playgroundPresets)
+      .readdirSync(gp.playgroundCharacters)
       .filter((f) => f.endsWith(".md"));
     return files
-      .map((f) => loadPreset(gp, f.replace(/\.md$/, "")))
-      .filter((p): p is Preset => p !== null);
+      .map((f) => loadCharacter(gp, f.replace(/\.md$/, "")))
+      .filter((c): c is Character => c !== null);
   } catch {
     return [];
   }
 }
 
-export function loadPreset(gp: GlobalPaths, slug: string): Preset | null {
+export function loadCharacter(gp: GlobalPaths, slug: string): Character | null {
   try {
-    const raw = fs.readFileSync(presetPath(gp, slug), "utf8");
+    const raw = fs.readFileSync(characterPath(gp, slug), "utf8");
     const parsed = matter(raw);
-    const fm = parsed.data as Partial<PresetFrontmatter>;
+    const fm = parsed.data as Partial<CharacterFrontmatter>;
     if (!fm.name || !fm.model) return null;
     return {
       slug,
@@ -72,6 +140,7 @@ export function loadPreset(gp: GlobalPaths, slug: string): Preset | null {
       model: fm.model,
       temperature: fm.temperature,
       max_tokens: fm.max_tokens,
+      telegram_bot_token: fm.telegram_bot_token,
       system_prompt: parsed.content.trim(),
     };
   } catch {
@@ -79,26 +148,25 @@ export function loadPreset(gp: GlobalPaths, slug: string): Preset | null {
   }
 }
 
-export function savePreset(
+export function saveCharacter(
   gp: GlobalPaths,
   slug: string,
-  fm: PresetFrontmatter,
+  fm: CharacterFrontmatter,
   systemPrompt: string,
 ): void {
-  fs.mkdirSync(gp.playgroundPresets, { recursive: true });
-  // Strip undefined values — js-yaml can't serialize them, and gray-matter
-  // blows up on "unacceptable kind of an object to dump [object Undefined]".
+  fs.mkdirSync(gp.playgroundCharacters, { recursive: true });
+  // Strip undefined values — js-yaml can't serialize them.
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(fm)) {
-    if (v !== undefined) cleaned[k] = v;
+    if (v !== undefined && v !== "") cleaned[k] = v;
   }
   const out = matter.stringify(systemPrompt, cleaned);
-  fs.writeFileSync(presetPath(gp, slug), out);
+  fs.writeFileSync(characterPath(gp, slug), out);
 }
 
-export function deletePreset(gp: GlobalPaths, slug: string): boolean {
+export function deleteCharacter(gp: GlobalPaths, slug: string): boolean {
   try {
-    fs.unlinkSync(presetPath(gp, slug));
+    fs.unlinkSync(characterPath(gp, slug));
     return true;
   } catch {
     return false;
@@ -130,16 +198,23 @@ export interface ChatMeta {
   title: string;
   created_at: string;
   updated_at: string;
-  /** Slug of the preset used to start this chat (frozen — edits to the preset
-   *  don't retroactively change this chat's behavior). */
-  preset: string | null;
-  /** Snapshot of the system prompt at chat creation time, independent of any
-   *  later preset edits. */
+  /**
+   * Slug of the character used to start this chat (frozen — edits to the
+   * character don't retroactively change this chat's behavior). null for
+   * "no character" chats, which route memory to `_shared`.
+   */
+  character: string | null;
+  /** Snapshot of the system prompt at chat creation, independent of edits. */
   system_prompt: string;
   /** Model id used (from LM Studio's /v1/models). */
   model: string;
   temperature?: number;
   max_tokens?: number;
+  /**
+   * If this chat was opened from Telegram: the Telegram chat_id. Lets us
+   * reconnect incoming Telegram messages to the right Dovai chat.
+   */
+  telegram_chat_id?: number | string;
 }
 
 function chatDir(gp: GlobalPaths, id: string): string {
@@ -180,13 +255,36 @@ export function loadChatMeta(gp: GlobalPaths, id: string): ChatMeta | null {
   try {
     const raw = fs.readFileSync(path.join(chatDir(gp, id), "meta.json"), "utf8");
     const parsed = JSON.parse(raw);
-    if (typeof parsed.id === "string" && typeof parsed.title === "string") {
-      return parsed as ChatMeta;
+    if (typeof parsed.id !== "string" || typeof parsed.title !== "string") return null;
+    // Back-compat: v1 used `preset` instead of `character`. Accept either.
+    if (!("character" in parsed) && "preset" in parsed) {
+      parsed.character = parsed.preset;
+      delete parsed.preset;
     }
-    return null;
+    return parsed as ChatMeta;
   } catch {
     return null;
   }
+}
+
+/**
+ * Find an existing chat by (character slug, Telegram chat_id). Used to
+ * re-use a single persistent chat per Telegram conversation instead of
+ * creating a new one on every incoming message.
+ */
+export function findChatByTelegramBinding(
+  gp: GlobalPaths,
+  characterSlug: string | null,
+  telegramChatId: number | string,
+): ChatMeta | null {
+  const all = listChats(gp);
+  const tgKey = String(telegramChatId);
+  for (const c of all) {
+    if (String(c.telegram_chat_id ?? "") !== tgKey) continue;
+    if ((c.character ?? null) !== (characterSlug ?? null)) continue;
+    return c;
+  }
+  return null;
 }
 
 export function createChat(gp: GlobalPaths, meta: Omit<ChatMeta, "created_at" | "updated_at">): ChatMeta {

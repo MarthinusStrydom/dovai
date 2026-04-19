@@ -70,16 +70,30 @@ export interface Memory {
 // File & directory helpers
 // ---------------------------------------------------------------------------
 
-function memoriesDir(gp: GlobalPaths): string {
-  return path.join(gp.playground, "learned");
+/** Namespace used for chats that have no character bound. */
+export const SHARED_NAMESPACE = "_shared";
+
+/**
+ * Each character (and `_shared` for no-character chats) has its OWN
+ * memory namespace. This is the whole point of the rename — memories
+ * learned chatting to one character never bleed into another.
+ */
+function memoriesDir(gp: GlobalPaths, characterSlug: string): string {
+  return path.join(gp.playground, "learned", characterSlug || SHARED_NAMESPACE);
 }
 
-function memoriesFile(gp: GlobalPaths): string {
-  return path.join(memoriesDir(gp), "memories.jsonl");
+function memoriesFile(gp: GlobalPaths, characterSlug: string): string {
+  return path.join(memoriesDir(gp, characterSlug), "memories.jsonl");
 }
 
-function ensureDir(gp: GlobalPaths): void {
-  fs.mkdirSync(memoriesDir(gp), { recursive: true });
+function ensureDir(gp: GlobalPaths, characterSlug: string): void {
+  fs.mkdirSync(memoriesDir(gp, characterSlug), { recursive: true });
+}
+
+/** Normalise an optional character slug to the underlying namespace name. */
+export function toNamespace(characterSlug: string | null | undefined): string {
+  if (!characterSlug || !characterSlug.trim()) return SHARED_NAMESPACE;
+  return characterSlug.trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -91,9 +105,9 @@ function ensureDir(gp: GlobalPaths): void {
  * before v2 will be missing `kind` and `dimension` — we upgrade them
  * in-memory to `observation` + `other`.
  */
-function readAll(gp: GlobalPaths): Memory[] {
+function readAll(gp: GlobalPaths, characterSlug: string): Memory[] {
   try {
-    const raw = fs.readFileSync(memoriesFile(gp), "utf8");
+    const raw = fs.readFileSync(memoriesFile(gp, characterSlug), "utf8");
     return raw
       .split("\n")
       .filter((l) => l.trim())
@@ -139,8 +153,12 @@ function categoryToDimension(cat?: string): Dimension {
   return "other";
 }
 
-export function listMemories(gp: GlobalPaths, opts: { includeDeleted?: boolean } = {}): Memory[] {
-  const all = readAll(gp);
+export function listMemories(
+  gp: GlobalPaths,
+  characterSlug: string,
+  opts: { includeDeleted?: boolean } = {},
+): Memory[] {
+  const all = readAll(gp, characterSlug);
   const tombstonedIds = new Set<string>();
   const supersededIds = new Set<string>();
   for (const m of all) {
@@ -174,8 +192,8 @@ export interface AddMemoryInput {
   supersedes?: string;
 }
 
-export function addMemory(gp: GlobalPaths, data: AddMemoryInput): Memory {
-  ensureDir(gp);
+export function addMemory(gp: GlobalPaths, characterSlug: string, data: AddMemoryInput): Memory {
+  ensureDir(gp, characterSlug);
   const mem: Memory = {
     id: crypto.randomUUID(),
     ts: new Date().toISOString(),
@@ -188,26 +206,29 @@ export function addMemory(gp: GlobalPaths, data: AddMemoryInput): Memory {
     ...(data.supersedes ? { supersedes: data.supersedes } : {}),
     deleted: false,
   };
-  fs.appendFileSync(memoriesFile(gp), JSON.stringify(mem) + "\n");
+  fs.appendFileSync(memoriesFile(gp, characterSlug), JSON.stringify(mem) + "\n");
   return mem;
 }
 
-export function deleteMemory(gp: GlobalPaths, id: string): boolean {
-  const existing = listMemories(gp, { includeDeleted: true }).find((m) => m.id === id);
+export function deleteMemory(gp: GlobalPaths, characterSlug: string, id: string): boolean {
+  const existing = listMemories(gp, characterSlug, { includeDeleted: true }).find((m) => m.id === id);
   if (!existing) return false;
   const tombstone: Memory = { ...existing, deleted: true, ts: new Date().toISOString() };
-  fs.appendFileSync(memoriesFile(gp), JSON.stringify(tombstone) + "\n");
+  fs.appendFileSync(memoriesFile(gp, characterSlug), JSON.stringify(tombstone) + "\n");
   return true;
 }
 
-export async function compactMemories(gp: GlobalPaths): Promise<{ before: number; after: number }> {
-  const before = (await fsp.readFile(memoriesFile(gp), "utf8").catch(() => ""))
+export async function compactMemories(
+  gp: GlobalPaths,
+  characterSlug: string,
+): Promise<{ before: number; after: number }> {
+  const before = (await fsp.readFile(memoriesFile(gp, characterSlug), "utf8").catch(() => ""))
     .split("\n")
     .filter(Boolean).length;
-  const live = listMemories(gp);
-  ensureDir(gp);
+  const live = listMemories(gp, characterSlug);
+  ensureDir(gp, characterSlug);
   const content = live.map((m) => JSON.stringify(m)).join("\n") + (live.length ? "\n" : "");
-  await fsp.writeFile(memoriesFile(gp), content);
+  await fsp.writeFile(memoriesFile(gp, characterSlug), content);
   return { before, after: live.length };
 }
 
@@ -237,8 +258,12 @@ const DIMENSION_LABELS: Record<Dimension, string> = {
  *     as supporting evidence
  *   - Explicit instructions surfaced separately at top (they override inferences)
  */
-export function composeMemoryBlock(gp: GlobalPaths, userName: string): string {
-  const memories = listMemories(gp);
+export function composeMemoryBlock(
+  gp: GlobalPaths,
+  characterSlug: string,
+  userName: string,
+): string {
+  const memories = listMemories(gp, characterSlug);
   if (memories.length === 0) return "";
 
   const observations = memories.filter((m) => m.kind === "observation");
@@ -634,10 +659,11 @@ function findObservationIdByText(
  */
 export function persistExtraction(
   gp: GlobalPaths,
+  characterSlug: string,
   chatId: string,
   result: ExtractionResult,
 ): { observations: number; inferences: number; instructions: number } {
-  const existing = listMemories(gp);
+  const existing = listMemories(gp, characterSlug);
   const existingObs = existing.filter((m) => m.kind === "observation");
   const existingObsTexts = new Map(existingObs.map((m) => [normalize(m.text), m.id]));
   const existingByKindText = new Set(existing.map((m) => `${m.kind}::${normalize(m.text)}`));
@@ -647,11 +673,11 @@ export function persistExtraction(
   let addedIns = 0;
 
   // --- Observations first so they're available as evidence for inferences
-  const newObsIds = new Map<string, string>(); // normalised text -> new id
+  const newObsIds = new Map<string, string>();
   for (const obs of result.observations) {
     const key = `observation::${normalize(obs.text)}`;
     if (existingByKindText.has(key)) continue;
-    const m = addMemory(gp, {
+    const m = addMemory(gp, characterSlug, {
       text: obs.text,
       kind: "observation",
       dimension: obs.dimension,
@@ -672,7 +698,7 @@ export function persistExtraction(
       const id = findObservationIdByText(e, existingObsTexts);
       if (id && !evidenceRefs.includes(id)) evidenceRefs.push(id);
     }
-    addMemory(gp, {
+    addMemory(gp, characterSlug, {
       text: inf.text,
       kind: "inference",
       dimension: inf.dimension,
@@ -688,7 +714,7 @@ export function persistExtraction(
   for (const ins of result.instructions) {
     const key = `instruction::${normalize(ins.text)}`;
     if (existingByKindText.has(key)) continue;
-    addMemory(gp, {
+    addMemory(gp, characterSlug, {
       text: ins.text,
       kind: "instruction",
       dimension: ins.dimension,
@@ -706,6 +732,7 @@ export function persistExtraction(
  */
 export async function runExtractionAndPersist(params: {
   gp: GlobalPaths;
+  characterSlug: string;
   lmStudioUrl: string;
   model: string;
   userName: string;
@@ -713,12 +740,12 @@ export async function runExtractionAndPersist(params: {
   messages: Array<{ role: string; content: string }>;
   logger?: LoggerAPI;
 }): Promise<{ observations: number; inferences: number; instructions: number }> {
-  const { gp, lmStudioUrl, model, userName, chatId, messages, logger } = params;
-  const existing = listMemories(gp);
+  const { gp, characterSlug, lmStudioUrl, model, userName, chatId, messages, logger } = params;
+  const existing = listMemories(gp, characterSlug);
   const result = await extractMemoriesFromExchange({
     lmStudioUrl, model, userName, existingMemories: existing, messages, logger,
   });
-  return persistExtraction(gp, chatId, result);
+  return persistExtraction(gp, characterSlug, chatId, result);
 }
 
 // ---------------------------------------------------------------------------
@@ -734,13 +761,14 @@ export async function runExtractionAndPersist(params: {
  */
 export async function reflectAndRebuildInferences(params: {
   gp: GlobalPaths;
+  characterSlug: string;
   lmStudioUrl: string;
   model: string;
   userName: string;
   logger?: LoggerAPI;
 }): Promise<{ superseded: number; added: number }> {
-  const { gp, lmStudioUrl, model, userName, logger } = params;
-  const existing = listMemories(gp);
+  const { gp, characterSlug, lmStudioUrl, model, userName, logger } = params;
+  const existing = listMemories(gp, characterSlug);
   const observations = existing.filter((m) => m.kind === "observation");
   const oldInferences = existing.filter((m) => m.kind === "inference");
 
@@ -833,7 +861,7 @@ export async function reflectAndRebuildInferences(params: {
     let superseded = 0;
     for (const old of oldInferences) {
       const tombstone: Memory = { ...old, deleted: true, ts: new Date().toISOString() };
-      fs.appendFileSync(memoriesFile(gp), JSON.stringify(tombstone) + "\n");
+      fs.appendFileSync(memoriesFile(gp, characterSlug), JSON.stringify(tombstone) + "\n");
       superseded++;
     }
 
@@ -848,7 +876,7 @@ export async function reflectAndRebuildInferences(params: {
         const id = findObservationIdByText(e, obsTexts);
         if (id && !evidenceRefs.includes(id)) evidenceRefs.push(id);
       }
-      addMemory(gp, {
+      addMemory(gp, characterSlug, {
         text: inf.text,
         kind: "inference",
         dimension: inf.dimension,

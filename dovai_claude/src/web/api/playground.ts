@@ -2,24 +2,33 @@
  * /api/playground/* — user's private chat space (LM Studio).
  *
  * Entirely separate from Sarah's work. Chats live under
- * `<dataRoot>/playground/`, which the filing clerk never scans and which
+ * `<playgroundRoot>/`, which the filing clerk never scans and which
  * Sarah's operator manual forbids her from touching. Nothing in playground
  * leaks into the knowledge graph, wake context, or email triage.
  *
- * Routes:
+ * Key concepts:
+ *   - Character: a saved system prompt + model + optional Telegram bot +
+ *     per-character memory namespace. Isolated from other characters.
+ *   - Chat: bound to at most one character. Memory is per-character.
  *
- *   GET    /api/playground/models                     → LM Studio /v1/models (proxied)
- *   GET    /api/playground/presets                    → list of saved presets
- *   POST   /api/playground/presets                    → create
- *   GET    /api/playground/presets/:slug              → read
- *   PUT    /api/playground/presets/:slug              → update
- *   DELETE /api/playground/presets/:slug              → delete
- *   GET    /api/playground/chats                      → list of chats (meta only)
- *   POST   /api/playground/chats                      → create new chat
- *   GET    /api/playground/chats/:id                  → full history
- *   DELETE /api/playground/chats/:id                  → delete chat + images
- *   POST   /api/playground/chats/:id/messages         → SSE stream: user msg → LM Studio → tokens
- *   GET    /api/playground/chats/:id/images/:filename → serve an uploaded image
+ * Routes:
+ *   GET    /api/playground/models
+ *   GET    /api/playground/characters
+ *   POST   /api/playground/characters
+ *   GET    /api/playground/characters/:slug
+ *   PUT    /api/playground/characters/:slug
+ *   DELETE /api/playground/characters/:slug
+ *   GET    /api/playground/characters/:slug/memories
+ *   POST   /api/playground/characters/:slug/memories
+ *   DELETE /api/playground/characters/:slug/memories/:id
+ *   POST   /api/playground/characters/:slug/memories/reflect
+ *   POST   /api/playground/characters/:slug/memories/compact
+ *   GET    /api/playground/chats
+ *   POST   /api/playground/chats
+ *   GET    /api/playground/chats/:id
+ *   DELETE /api/playground/chats/:id
+ *   POST   /api/playground/chats/:id/messages
+ *   GET    /api/playground/chats/:id/images/:filename
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -35,12 +44,13 @@ import {
   runExtractionAndPersist,
   compactMemories,
   reflectAndRebuildInferences,
+  toNamespace,
 } from "../../lib/memories.ts";
 import {
-  listPresets,
-  loadPreset,
-  savePreset,
-  deletePreset,
+  listCharacters,
+  loadCharacter,
+  saveCharacter,
+  deleteCharacter,
   listChats,
   loadChatMeta,
   createChat,
@@ -52,7 +62,7 @@ import {
   saveImageDataUrl,
   type ChatMessage,
   type ChatContentPart,
-  type PresetFrontmatter,
+  type CharacterFrontmatter,
 } from "../../lib/playground.ts";
 
 export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
@@ -70,62 +80,142 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     }
   });
 
-  // ---- Presets -----------------------------------------------------------
-  app.get("/api/playground/presets", (c) => c.json({ presets: listPresets(ctx.global) }));
+  // ---- Characters --------------------------------------------------------
+  app.get("/api/playground/characters", (c) => c.json({ characters: listCharacters(ctx.global) }));
 
-  app.get("/api/playground/presets/:slug", (c) => {
-    const p = loadPreset(ctx.global, c.req.param("slug"));
-    if (!p) return c.json({ error: "not found" }, 404);
-    return c.json(p);
+  app.get("/api/playground/characters/:slug", (c) => {
+    const ch = loadCharacter(ctx.global, c.req.param("slug"));
+    if (!ch) return c.json({ error: "not found" }, 404);
+    return c.json(ch);
   });
 
-  app.post("/api/playground/presets", async (c) => {
+  app.post("/api/playground/characters", async (c) => {
     const body = (await c.req.json()) as {
       slug?: string;
       name?: string;
       model?: string;
       temperature?: number;
       max_tokens?: number;
+      telegram_bot_token?: string;
       system_prompt?: string;
     };
     if (!body.slug || !body.name || !body.model) {
       return c.json({ error: "slug, name, model required" }, 400);
     }
-    const fm: PresetFrontmatter = {
+    if (body.slug === "_shared") {
+      return c.json({ error: "_shared is reserved for no-character memory" }, 400);
+    }
+    const fm: CharacterFrontmatter = {
       name: body.name,
       model: body.model,
       temperature: body.temperature,
       max_tokens: body.max_tokens,
+      telegram_bot_token: body.telegram_bot_token,
     };
-    savePreset(ctx.global, body.slug, fm, body.system_prompt ?? "");
-    const p = loadPreset(ctx.global, body.slug);
-    return c.json(p);
+    saveCharacter(ctx.global, body.slug, fm, body.system_prompt ?? "");
+    void ctx.characterBots?.reload();
+    const ch = loadCharacter(ctx.global, body.slug);
+    return c.json(ch);
   });
 
-  app.put("/api/playground/presets/:slug", async (c) => {
+  app.put("/api/playground/characters/:slug", async (c) => {
     const slug = c.req.param("slug");
     const body = (await c.req.json()) as {
       name?: string;
       model?: string;
       temperature?: number;
       max_tokens?: number;
+      telegram_bot_token?: string;
       system_prompt?: string;
     };
-    const existing = loadPreset(ctx.global, slug);
+    const existing = loadCharacter(ctx.global, slug);
     if (!existing) return c.json({ error: "not found" }, 404);
-    const fm: PresetFrontmatter = {
+    const fm: CharacterFrontmatter = {
       name: body.name ?? existing.name,
       model: body.model ?? existing.model,
       temperature: body.temperature ?? existing.temperature,
       max_tokens: body.max_tokens ?? existing.max_tokens,
+      telegram_bot_token: body.telegram_bot_token ?? existing.telegram_bot_token,
     };
-    savePreset(ctx.global, slug, fm, body.system_prompt ?? existing.system_prompt);
-    return c.json(loadPreset(ctx.global, slug));
+    saveCharacter(ctx.global, slug, fm, body.system_prompt ?? existing.system_prompt);
+    void ctx.characterBots?.reload();
+    return c.json(loadCharacter(ctx.global, slug));
   });
 
-  app.delete("/api/playground/presets/:slug", (c) => {
-    const ok = deletePreset(ctx.global, c.req.param("slug"));
+  app.delete("/api/playground/characters/:slug", (c) => {
+    const ok = deleteCharacter(ctx.global, c.req.param("slug"));
+    void ctx.characterBots?.reload();
     return c.json({ ok });
+  });
+
+  // ---- Per-character memories --------------------------------------------
+  // Memory is namespaced per character — a memory learned while chatting with
+  // `book_voice` never appears when you're chatting with `code_reviewer`.
+  // Use `_shared` as the slug for no-character chats.
+  app.get("/api/playground/characters/:slug/memories", (c) => {
+    const slug = toNamespace(c.req.param("slug"));
+    return c.json({ memories: listMemories(ctx.global, slug) });
+  });
+
+  app.post("/api/playground/characters/:slug/memories", async (c) => {
+    const slug = toNamespace(c.req.param("slug"));
+    const body = (await c.req.json()) as {
+      text?: string;
+      kind?: "observation" | "inference" | "instruction";
+      dimension?: string;
+    };
+    if (!body.text || !body.text.trim()) {
+      return c.json({ error: "text required" }, 400);
+    }
+    const validDims = [
+      "aesthetic", "values", "communication", "life_context",
+      "cognitive", "emotional", "self_concept", "other",
+    ] as const;
+    const dimension = validDims.includes(body.dimension as typeof validDims[number])
+      ? (body.dimension as typeof validDims[number])
+      : "other";
+    const m = addMemory(ctx.global, slug, {
+      text: body.text,
+      kind: body.kind || "observation",
+      dimension,
+      chat_id: null,
+    });
+    return c.json(m);
+  });
+
+  app.delete("/api/playground/characters/:slug/memories/:id", (c) => {
+    const slug = toNamespace(c.req.param("slug"));
+    const ok = deleteMemory(ctx.global, slug, c.req.param("id"));
+    return c.json({ ok });
+  });
+
+  app.post("/api/playground/characters/:slug/memories/compact", async (c) => {
+    const slug = toNamespace(c.req.param("slug"));
+    const result = await compactMemories(ctx.global, slug);
+    return c.json(result);
+  });
+
+  /** Reflection pass — rebuild inferences for this character. */
+  app.post("/api/playground/characters/:slug/memories/reflect", async (c) => {
+    const slug = toNamespace(c.req.param("slug"));
+    const { data: pr } = loadProviderSettings(ctx.global);
+    const { data: ws } = loadWorkspaceSettings(ctx.global);
+    const modelsRes = await fetch(pr.lm_studio_url.replace(/\/+$/, "") + "/v1/models").catch(() => null);
+    let model = "";
+    if (modelsRes?.ok) {
+      const j = (await modelsRes.json()) as { data?: Array<{ id?: string }> };
+      model = j.data?.[0]?.id ?? "";
+    }
+    if (!model) return c.json({ error: "no model available from LM Studio" }, 502);
+    const result = await reflectAndRebuildInferences({
+      gp: ctx.global,
+      characterSlug: slug,
+      lmStudioUrl: pr.lm_studio_url,
+      model,
+      userName: ws.user_name,
+      logger: ctx.logger,
+    });
+    return c.json(result);
   });
 
   // ---- Chats -------------------------------------------------------------
@@ -134,7 +224,7 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
   app.post("/api/playground/chats", async (c) => {
     const body = (await c.req.json()) as {
       title?: string;
-      preset?: string | null;
+      character?: string | null;
       model?: string;
       temperature?: number;
       max_tokens?: number;
@@ -143,27 +233,28 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     const title = body.title?.trim() || "New chat";
     const id = newChatId(title);
 
-    // Resolve preset details if one was specified
+    // Resolve character details if one was specified. The character acts as
+    // a source of defaults; any explicit body field overrides it.
     let system_prompt = body.system_prompt ?? "";
     let model = body.model ?? "";
     let temperature = body.temperature;
     let max_tokens = body.max_tokens;
-    if (body.preset) {
-      const preset = loadPreset(ctx.global, body.preset);
-      if (preset) {
-        system_prompt ||= preset.system_prompt;
-        model ||= preset.model;
-        temperature ??= preset.temperature;
-        max_tokens ??= preset.max_tokens;
+    if (body.character) {
+      const character = loadCharacter(ctx.global, body.character);
+      if (character) {
+        system_prompt ||= character.system_prompt;
+        model ||= character.model;
+        temperature ??= character.temperature;
+        max_tokens ??= character.max_tokens;
       }
     }
 
-    if (!model) return c.json({ error: "model required (or provide a preset)" }, 400);
+    if (!model) return c.json({ error: "model required (or provide a character)" }, 400);
 
     const meta = createChat(ctx.global, {
       id,
       title,
-      preset: body.preset ?? null,
+      character: body.character ?? null,
       system_prompt,
       model,
       temperature,
@@ -201,74 +292,6 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     } catch {
       return c.text("not found", 404);
     }
-  });
-
-  // ---- Memories (the "what I know about you" layer) ---------------------
-  app.get("/api/playground/memories", (c) => {
-    return c.json({ memories: listMemories(ctx.global) });
-  });
-
-  app.post("/api/playground/memories", async (c) => {
-    const body = (await c.req.json()) as {
-      text?: string;
-      kind?: "observation" | "inference" | "instruction";
-      dimension?: string;
-    };
-    if (!body.text || !body.text.trim()) {
-      return c.json({ error: "text required" }, 400);
-    }
-    // deliberate narrow coerce: anything unexpected falls through to "other"
-    const validDims = [
-      "aesthetic", "values", "communication", "life_context",
-      "cognitive", "emotional", "self_concept", "other",
-    ] as const;
-    const dimension = validDims.includes(body.dimension as typeof validDims[number])
-      ? (body.dimension as typeof validDims[number])
-      : "other";
-    const m = addMemory(ctx.global, {
-      text: body.text,
-      kind: body.kind || "observation",
-      dimension,
-      chat_id: null, // manually added
-    });
-    return c.json(m);
-  });
-
-  app.delete("/api/playground/memories/:id", (c) => {
-    const ok = deleteMemory(ctx.global, c.req.param("id"));
-    return c.json({ ok });
-  });
-
-  app.post("/api/playground/memories/compact", async (c) => {
-    const result = await compactMemories(ctx.global);
-    return c.json(result);
-  });
-
-  /**
-   * Rebuild-inferences pass ("reflection"). Re-synthesises all inferences
-   * from the current set of observations. Useful when inferences have drifted
-   * or after several observations have been added/deleted.
-   */
-  app.post("/api/playground/memories/reflect", async (c) => {
-    const { data: pr } = loadProviderSettings(ctx.global);
-    const { data: ws } = loadWorkspaceSettings(ctx.global);
-    // Use the first configured model; user can change it later
-    // via a dedicated "extraction_model" setting if needed.
-    const modelsRes = await fetch(pr.lm_studio_url.replace(/\/+$/, "") + "/v1/models").catch(() => null);
-    let model = "";
-    if (modelsRes?.ok) {
-      const j = (await modelsRes.json()) as { data?: Array<{ id?: string }> };
-      model = j.data?.[0]?.id ?? "";
-    }
-    if (!model) return c.json({ error: "no model available from LM Studio" }, 502);
-    const result = await reflectAndRebuildInferences({
-      gp: ctx.global,
-      lmStudioUrl: pr.lm_studio_url,
-      model,
-      userName: ws.user_name,
-      logger: ctx.logger,
-    });
-    return c.json(result);
   });
 
   // ---- Messages: SSE stream ---------------------------------------------
@@ -337,10 +360,12 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     const historyForModel = history
       .slice(0, -1)
       .map((m) => ({ role: m.role, content: m.content }));
-    // Load known memories and prepend as a context block on the system prompt.
-    // Fresh on every send so yesterday's learned facts land in today's turn.
+    // Load known memories (for THIS chat's character) and prepend as a
+    // context block on the system prompt. Memory is per-character — chats
+    // with no character bound route to the `_shared` namespace.
     const { data: ws } = loadWorkspaceSettings(ctx.global);
-    const memoryBlock = composeMemoryBlock(ctx.global, ws.user_name);
+    const characterSlug = toNamespace(meta.character);
+    const memoryBlock = composeMemoryBlock(ctx.global, characterSlug, ws.user_name);
     const combinedSystem = [meta.system_prompt, memoryBlock]
       .filter((s) => s && s.trim())
       .join("\n\n");
@@ -453,6 +478,7 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
             });
             const added = await runExtractionAndPersist({
               gp: ctx.global,
+              characterSlug,
               lmStudioUrl: pr.lm_studio_url,
               model: meta.model,
               userName: ws.user_name,

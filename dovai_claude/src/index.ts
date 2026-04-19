@@ -22,6 +22,7 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { globalPaths } from "./lib/global_paths.ts";
 import { initGlobalDovai } from "./lib/workspace.ts";
+import { migrateV1ToV2 as migratePlaygroundV1ToV2 } from "./lib/playground.ts";
 import { Logger } from "./lib/logger.ts";
 import { acquireLock, refreshLock, releaseLock } from "./lib/lock.ts";
 import { acquireOwnership, refreshOwnership, releaseOwnership } from "./lib/owner_lock.ts";
@@ -94,6 +95,9 @@ async function main(): Promise<void> {
 
   // 2. Init ~/.dovai/ structure from templates
   initGlobalDovai(gp);
+  // Playground v1 → v2 migration: rename presets/ → characters/ and move
+  // learned/memories.jsonl → learned/_shared/memories.jsonl. Idempotent.
+  migratePlaygroundV1ToV2(gp);
 
   // 3. Logger (now that logs dir exists)
   const rootLogger = new Logger(gp, "server");

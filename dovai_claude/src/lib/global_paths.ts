@@ -67,11 +67,15 @@ export interface GlobalPaths {
   conversationLog: string;
 
   // ---- Playground (user's personal chat space, isolated from Sarah) ----
-  /** <dataRoot>/playground/ — user-only, never indexed or seen by Sarah. */
+  /** <playgroundRoot>/ — user-only, never indexed or seen by Sarah. */
   playground: string;
-  /** <dataRoot>/playground/presets/ — saved system-prompt presets. */
-  playgroundPresets: string;
-  /** <dataRoot>/playground/chats/ — saved conversations, one folder each. */
+  /**
+   * <playgroundRoot>/characters/ — saved characters (a.k.a. "presets" in
+   * v1): system prompt + model + memory store + optional Telegram bot.
+   * Each character is an isolated agent with its own voice and memory.
+   */
+  playgroundCharacters: string;
+  /** <playgroundRoot>/chats/ — saved conversations, one folder each. */
   playgroundChats: string;
 
   // ---- State-dir paths (local, ephemeral, machine-specific) ----
@@ -276,7 +280,7 @@ export function globalPaths(): GlobalPaths {
     conversationLog: path.join(dataRoot, "state", "conversation_log.md"),
 
     playground: resolvePlaygroundRoot(dataRoot),
-    playgroundPresets: path.join(resolvePlaygroundRoot(dataRoot), "presets"),
+    playgroundCharacters: path.join(resolvePlaygroundRoot(dataRoot), "characters"),
     playgroundChats: path.join(resolvePlaygroundRoot(dataRoot), "chats"),
 
     // State-dir fields

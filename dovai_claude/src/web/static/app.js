@@ -1693,9 +1693,9 @@ if (IS_CHAT_PAGE) {
 
 const chatState = {
   chats: [],          // list from /api/playground/chats
-  presets: [],        // list from /api/playground/presets
+  characters: [],     // list from /api/playground/characters
   models: [],         // list from /api/playground/models
-  memories: [],       // list from /api/playground/memories
+  memories: [],       // memories for the CURRENTLY-SELECTED character
   currentChatId: null,
   currentMeta: null,
   messages: [],
@@ -1705,18 +1705,21 @@ const chatState = {
 
 async function loadChatTab() {
   try {
-    const [chatsRes, presetsRes, modelsRes, memoriesRes] = await Promise.all([
+    const [chatsRes, charactersRes, modelsRes] = await Promise.all([
       api("GET", "/api/playground/chats"),
-      api("GET", "/api/playground/presets"),
+      api("GET", "/api/playground/characters"),
       api("GET", "/api/playground/models").catch(() => ({ models: [] })),
-      api("GET", "/api/playground/memories").catch(() => ({ memories: [] })),
     ]);
     chatState.chats = chatsRes.chats || [];
-    chatState.presets = presetsRes.presets || [];
+    chatState.characters = charactersRes.characters || [];
+    // Memories are per-character — load for the currently-selected character
+    // (or _shared if none is selected). Reloaded on character change + after each turn.
+    const slug = $("#chat-character")?.value || "_shared";
+    const memoriesRes = await api("GET", `/api/playground/characters/${encodeURIComponent(slug)}/memories`).catch(() => ({ memories: [] }));
     chatState.models = modelsRes.models || [];
     chatState.memories = memoriesRes.memories || [];
     renderChatList();
-    renderPresetDropdown();
+    renderCharacterDropdown();
     renderModelDropdown();
     renderMemorySummary();
   } catch (err) {
@@ -1892,7 +1895,8 @@ function renderObservationsView(obs) {
 async function deleteMemoryAndRefresh(id) {
   if (!confirm("Delete this memory?")) return;
   try {
-    await api("DELETE", "/api/playground/memories/" + encodeURIComponent(id));
+    const slug = currentCharacterSlug();
+    await api("DELETE", `/api/playground/characters/${encodeURIComponent(slug)}/memories/${encodeURIComponent(id)}`);
     await refreshMemories();
     renderAllMemoryViews();
   } catch (err) {
@@ -1912,9 +1916,20 @@ function formatMemoryTs(iso) {
   }
 }
 
+/**
+ * Which character's memories do we currently care about?
+ * If a chat is open, use that chat's bound character. Otherwise use whatever
+ * is selected in the sidebar dropdown. Falls back to "_shared" (no character).
+ */
+function currentCharacterSlug() {
+  if (chatState.currentMeta?.character) return chatState.currentMeta.character;
+  return $("#chat-character")?.value || "_shared";
+}
+
 async function refreshMemories() {
   try {
-    const r = await api("GET", "/api/playground/memories");
+    const slug = currentCharacterSlug();
+    const r = await api("GET", `/api/playground/characters/${encodeURIComponent(slug)}/memories`);
     chatState.memories = r.memories || [];
     renderMemorySummary();
     // If the memory modal is open, re-render its contents too so newly-
@@ -1931,7 +1946,8 @@ async function addMemoryManual() {
   const dimension = $("#chat-memory-add-dimension").value;
   if (!text) return;
   try {
-    await api("POST", "/api/playground/memories", { text, kind, dimension });
+    const slug = currentCharacterSlug();
+    await api("POST", `/api/playground/characters/${encodeURIComponent(slug)}/memories`, { text, kind, dimension });
     $("#chat-memory-add-text").value = "";
     await refreshMemories();
     renderAllMemoryViews();
@@ -1947,7 +1963,8 @@ async function rebuildProfile() {
   const oldText = btn.innerHTML;
   btn.innerHTML = "🔄 Rebuilding…";
   try {
-    const r = await api("POST", "/api/playground/memories/reflect");
+    const slug = currentCharacterSlug();
+    const r = await api("POST", `/api/playground/characters/${encodeURIComponent(slug)}/memories/reflect`);
     await refreshMemories();
     renderAllMemoryViews();
     flash(`Rebuilt profile: ${r.added} inference${r.added === 1 ? "" : "s"}, ${r.superseded} superseded.`);
@@ -2034,24 +2051,24 @@ function groupChatsByRecency(chats) {
   return groups;
 }
 
-function renderPresetDropdown() {
-  const sel = $("#chat-preset");
+function renderCharacterDropdown() {
+  const sel = $("#chat-character");
   if (!sel) return;
-  sel.innerHTML = '<option value="">No preset</option>';
-  for (const p of chatState.presets) {
+  sel.innerHTML = '<option value="">No character</option>';
+  for (const p of chatState.characters) {
     const opt = document.createElement("option");
     opt.value = p.slug;
     opt.textContent = p.name;
     sel.appendChild(opt);
   }
-  // If current chat has a preset, select it
-  if (chatState.currentMeta?.preset) sel.value = chatState.currentMeta.preset;
-  updateDeletePresetVisibility();
+  // If the current chat has a character bound, select it
+  if (chatState.currentMeta?.character) sel.value = chatState.currentMeta.character;
+  updateDeleteCharacterVisibility();
 }
 
-function updateDeletePresetVisibility() {
-  const hasSelection = !!$("#chat-preset")?.value;
-  $("#chat-delete-preset")?.classList.toggle("hidden", !hasSelection);
+function updateDeleteCharacterVisibility() {
+  const hasSelection = !!$("#chat-character")?.value;
+  $("#chat-delete-character")?.classList.toggle("hidden", !hasSelection);
 }
 
 function renderModelDropdown() {
@@ -2082,9 +2099,12 @@ async function openChat(id) {
     chatState.messages = r.messages || [];
     $("#chat-title").textContent = r.meta.title;
     $("#chat-model").value = r.meta.model || "";
-    $("#chat-preset").value = r.meta.preset || "";
+    $("#chat-character").value = r.meta.character || "";
     renderMessages();
     renderChatList();
+    // This chat's memories may be in a different character's namespace than
+    // the dropdown had. Refresh the sidebar summary to reflect that.
+    await refreshMemories();
   } catch (err) {
     alert("Could not open chat: " + err.message);
   }
@@ -2144,7 +2164,7 @@ function renderMessageText(text) {
 }
 
 async function newChat() {
-  const preset = $("#chat-preset").value || null;
+  const character = $("#chat-character").value || null;
   const model = $("#chat-model").value;
   if (!model) {
     alert("Pick a model first (LM Studio may be offline).");
@@ -2153,7 +2173,7 @@ async function newChat() {
   try {
     const meta = await api("POST", "/api/playground/chats", {
       title: "New chat",
-      preset,
+      character,
       model,
     });
     chatState.currentChatId = meta.id;
@@ -2324,40 +2344,42 @@ function readFileAsDataUrl(file) {
   });
 }
 
-// ---- Preset editor modal ----
-let editingPresetSlug = null; // null = creating new
-function openPresetEditor(slug) {
-  editingPresetSlug = slug;
-  const preset = slug ? chatState.presets.find((p) => p.slug === slug) : null;
-  $("#chat-preset-modal-title").textContent = preset ? "Edit preset" : "New preset";
-  $("#chat-preset-slug").value = preset?.slug || "";
-  $("#chat-preset-slug").disabled = !!preset;
-  $("#chat-preset-name").value = preset?.name || "";
-  $("#chat-preset-model").value = preset?.model || ($("#chat-model").value || "");
-  $("#chat-preset-temp").value = preset?.temperature ?? "";
-  $("#chat-preset-maxtok").value = preset?.max_tokens ?? "";
-  $("#chat-preset-prompt").value = preset?.system_prompt || "";
-  $("#chat-preset-delete").classList.toggle("hidden", !preset);
-  $("#chat-preset-error").classList.add("hidden");
-  $("#chat-preset-modal").classList.remove("hidden");
-  $("#chat-preset-modal").setAttribute("aria-hidden", "false");
+// ---- Character editor modal ----
+let editingCharacterSlug = null; // null = creating new
+function openCharacterEditor(slug) {
+  editingCharacterSlug = slug;
+  const character = slug ? chatState.characters.find((c) => c.slug === slug) : null;
+  $("#chat-character-modal-title").textContent = character ? "Edit character" : "New character";
+  $("#chat-character-slug").value = character?.slug || "";
+  $("#chat-character-slug").disabled = !!character;
+  $("#chat-character-name").value = character?.name || "";
+  $("#chat-character-model").value = character?.model || ($("#chat-model").value || "");
+  $("#chat-character-temp").value = character?.temperature ?? "";
+  $("#chat-character-maxtok").value = character?.max_tokens ?? "";
+  $("#chat-character-tgtoken").value = character?.telegram_bot_token || "";
+  $("#chat-character-prompt").value = character?.system_prompt || "";
+  $("#chat-character-delete").classList.toggle("hidden", !character);
+  $("#chat-character-error").classList.add("hidden");
+  $("#chat-character-modal").classList.remove("hidden");
+  $("#chat-character-modal").setAttribute("aria-hidden", "false");
   document.body.classList.add("wizard-modal-open");
 }
-function closePresetEditor() {
-  $("#chat-preset-modal").classList.add("hidden");
-  $("#chat-preset-modal").setAttribute("aria-hidden", "true");
+function closeCharacterEditor() {
+  $("#chat-character-modal").classList.add("hidden");
+  $("#chat-character-modal").setAttribute("aria-hidden", "true");
   document.body.classList.remove("wizard-modal-open");
 }
 
-async function savePresetFromEditor() {
-  const slug = $("#chat-preset-slug").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-  const name = $("#chat-preset-name").value.trim();
-  const model = $("#chat-preset-model").value.trim();
-  const temp = parseFloat($("#chat-preset-temp").value);
-  const maxTok = parseInt($("#chat-preset-maxtok").value, 10);
-  const prompt = $("#chat-preset-prompt").value;
+async function saveCharacterFromEditor() {
+  const slug = $("#chat-character-slug").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  const name = $("#chat-character-name").value.trim();
+  const model = $("#chat-character-model").value.trim();
+  const temp = parseFloat($("#chat-character-temp").value);
+  const maxTok = parseInt($("#chat-character-maxtok").value, 10);
+  const tgToken = $("#chat-character-tgtoken").value.trim();
+  const prompt = $("#chat-character-prompt").value;
   if (!slug || !name || !model) {
-    const err = $("#chat-preset-error");
+    const err = $("#chat-character-error");
     err.textContent = "Slug, name, and model are required.";
     err.classList.remove("hidden");
     return;
@@ -2367,33 +2389,33 @@ async function savePresetFromEditor() {
     model,
     temperature: isFinite(temp) ? temp : undefined,
     max_tokens: isFinite(maxTok) ? maxTok : undefined,
+    telegram_bot_token: tgToken || undefined,
     system_prompt: prompt,
   };
-  const savedSlug = editingPresetSlug ?? slug;
+  const savedSlug = editingCharacterSlug ?? slug;
   try {
-    if (editingPresetSlug) {
-      await api("PUT", "/api/playground/presets/" + encodeURIComponent(editingPresetSlug), body);
+    if (editingCharacterSlug) {
+      await api("PUT", "/api/playground/characters/" + encodeURIComponent(editingCharacterSlug), body);
     } else {
-      await api("POST", "/api/playground/presets", { slug, ...body });
+      await api("POST", "/api/playground/characters", { slug, ...body });
     }
-    closePresetEditor();
+    closeCharacterEditor();
     await loadChatTab();
-    // Auto-select the preset we just saved so the user sees it's active.
-    const sel = $("#chat-preset");
+    const sel = $("#chat-character");
     if (sel) sel.value = savedSlug;
-    flash(`Saved preset: ${name}`);
+    flash(`Saved character: ${name}`);
   } catch (err) {
-    const e = $("#chat-preset-error");
+    const e = $("#chat-character-error");
     e.textContent = err.message;
     e.classList.remove("hidden");
   }
 }
 
-async function deletePresetFromEditor() {
-  if (!editingPresetSlug) return;
-  if (!confirm("Delete this preset? Chats already using it keep their copy of the prompt.")) return;
-  await api("DELETE", "/api/playground/presets/" + encodeURIComponent(editingPresetSlug));
-  closePresetEditor();
+async function deleteCharacterFromEditor() {
+  if (!editingCharacterSlug) return;
+  if (!confirm("Delete this character? Chats already bound to it keep their snapshot of the system prompt, so existing conversations are unaffected. The character's memory folder is preserved (learned/<slug>/) — delete it manually from disk if you also want to forget what was learned.")) return;
+  await api("DELETE", "/api/playground/characters/" + encodeURIComponent(editingCharacterSlug));
+  closeCharacterEditor();
   await loadChatTab();
 }
 
@@ -2417,36 +2439,41 @@ $("#chat-image-input")?.addEventListener("change", async (e) => {
   e.target.value = ""; // reset so same file can be picked again
   renderAttachedImages();
 });
-$("#chat-edit-preset")?.addEventListener("click", () => {
-  const cur = $("#chat-preset").value;
+$("#chat-edit-character")?.addEventListener("click", () => {
+  const cur = $("#chat-character").value;
   if (!cur) {
-    alert('Select a preset from the dropdown to edit it, or click "+ New preset" to create a new one.');
+    alert('Select a character from the dropdown to edit it, or click "+ New" to create a new one.');
     return;
   }
-  openPresetEditor(cur);
+  openCharacterEditor(cur);
 });
-$("#chat-new-preset")?.addEventListener("click", () => {
-  openPresetEditor(null);
+$("#chat-new-character")?.addEventListener("click", () => {
+  openCharacterEditor(null);
 });
-$("#chat-preset")?.addEventListener("change", updateDeletePresetVisibility);
-$("#chat-delete-preset")?.addEventListener("click", async () => {
-  const slug = $("#chat-preset").value;
+$("#chat-character")?.addEventListener("change", async () => {
+  updateDeleteCharacterVisibility();
+  // Memories are per-character — reload whenever the dropdown changes so
+  // the sidebar summary and modal reflect the selected character's profile.
+  await refreshMemories();
+});
+$("#chat-delete-character")?.addEventListener("click", async () => {
+  const slug = $("#chat-character").value;
   if (!slug) return;
-  const preset = chatState.presets.find((p) => p.slug === slug);
-  const label = preset?.name || slug;
-  if (!confirm(`Delete preset "${label}"? Chats already using it keep their snapshot of the prompt, so existing conversations are unaffected.`)) return;
+  const character = chatState.characters.find((c) => c.slug === slug);
+  const label = character?.name || slug;
+  if (!confirm(`Delete character "${label}"? Chats already bound to it keep their snapshot of the prompt. The character's memory folder (learned/${slug}/) is preserved on disk — delete manually if you also want to forget what was learned.`)) return;
   try {
-    await api("DELETE", "/api/playground/presets/" + encodeURIComponent(slug));
-    flash(`Deleted preset: ${label}`);
+    await api("DELETE", "/api/playground/characters/" + encodeURIComponent(slug));
+    flash(`Deleted character: ${label}`);
     await loadChatTab();
-    $("#chat-preset").value = "";
-    updateDeletePresetVisibility();
+    $("#chat-character").value = "";
+    updateDeleteCharacterVisibility();
   } catch (err) {
-    alert("Could not delete preset: " + err.message);
+    alert("Could not delete character: " + err.message);
   }
 });
-$("#chat-preset-cancel")?.addEventListener("click", closePresetEditor);
-$("#chat-preset-save")?.addEventListener("click", savePresetFromEditor);
-$("#chat-preset-delete")?.addEventListener("click", deletePresetFromEditor);
+$("#chat-character-cancel")?.addEventListener("click", closeCharacterEditor);
+$("#chat-character-save")?.addEventListener("click", saveCharacterFromEditor);
+$("#chat-character-delete")?.addEventListener("click", deleteCharacterFromEditor);
 
 // Tab-switch hook for "chat" is wired directly into onTabShown() above.
