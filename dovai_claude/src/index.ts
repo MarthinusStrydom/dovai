@@ -30,6 +30,7 @@ import { loadProviderSettings } from "./lib/config.ts";
 import { FilingClerk } from "./filing_clerk/index.ts";
 import { EmailPoller } from "./filing_clerk/email_poller.ts";
 import { TelegramService } from "./filing_clerk/telegram_bot.ts";
+import { CharacterBotManagerImpl } from "./playground/character_bots.ts";
 import { OutboxDispatcher } from "./filing_clerk/outbox_dispatcher.ts";
 import { WakeDispatcher } from "./wake/dispatcher.ts";
 import { Scheduler } from "./wake/scheduler.ts";
@@ -241,6 +242,13 @@ async function main(): Promise<void> {
   await outbox.start();
   emailPoller.start();
 
+  // 9a. Playground Character bots (per-character Telegram, Chat-tab only,
+  // entirely walled off from Sarah). One bot per Character that has a
+  // configured Telegram token.
+  const characterBots = new CharacterBotManagerImpl(gp, rootLogger);
+  ctx.characterBots = characterBots;
+  await characterBots.start();
+
   // 10. Scheduler + wake dispatcher
   scheduler.reload();
   const wakeDispatcher = new WakeDispatcher(gp, rootLogger.child("wake"), clerk);
@@ -279,6 +287,7 @@ async function main(): Promise<void> {
     emailPoller.stop();
     await telegram.stop();
     await outbox.stop();
+    await characterBots.stop();
     await clerk.stop();
 
     try {
