@@ -454,7 +454,7 @@ export class OutboxDispatcher {
   private async composeRawMime(msg: OutgoingEmail): Promise<Buffer> {
     const from = this.resolveFromAddress(msg);
     const attachments = (msg.attachments || []).map((p) => {
-      const abs = path.isAbsolute(p) ? p : path.join(this.gp.dovaiHome, p);
+      const abs = path.isAbsolute(p) ? p : path.join(this.gp.dataRoot, p);
       return { filename: path.basename(abs), path: abs };
     });
     const transport = nodemailer.createTransport({
@@ -508,7 +508,7 @@ export class OutboxDispatcher {
     });
 
     const attachments = (msg.attachments || []).map((p) => {
-      const abs = path.isAbsolute(p) ? p : path.join(this.gp.dovaiHome, p);
+      const abs = path.isAbsolute(p) ? p : path.join(this.gp.dataRoot, p);
       return { filename: path.basename(abs), path: abs };
     });
 

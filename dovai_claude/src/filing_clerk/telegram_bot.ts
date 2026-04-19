@@ -206,7 +206,7 @@ export class TelegramService {
     }
     for (const f of files) {
       try {
-        const abs = path.isAbsolute(f) ? f : path.join(this.gp.dovaiHome, f);
+        const abs = path.isAbsolute(f) ? f : path.join(this.gp.dataRoot, f);
         const stat = await fs.stat(abs);
         if (!stat.isFile()) continue;
         await this.bot.sendDocument(chatId, abs);
