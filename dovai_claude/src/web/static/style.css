@@ -789,11 +789,18 @@ body.wizard-modal-open { overflow: hidden; }
   font-size: 18px;
   background: var(--card);
   flex-shrink: 0;
+  overflow: hidden;
 }
 .chat-attach-btn:hover { background: var(--border); }
 .chat-attach-btn.disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+/* Force-hide the nested file input — the HTML `hidden` attribute
+   gets overridden by browser default styling on file inputs in
+   some cases, so we belt-and-braces it with CSS. */
+.chat-attach-btn input[type="file"] {
+  display: none !important;
 }
 #chat-input {
   flex: 1;
