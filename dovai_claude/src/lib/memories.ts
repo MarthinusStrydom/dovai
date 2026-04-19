@@ -74,12 +74,14 @@ export interface Memory {
 export const SHARED_NAMESPACE = "_shared";
 
 /**
- * Each character (and `_shared` for no-character chats) has its OWN
- * memory namespace. This is the whole point of the rename — memories
- * learned chatting to one character never bleed into another.
+ * v3 layout: memories live INSIDE each character's folder, at
+ * `<playgroundRoot>/<slug>/learned/memories.jsonl`. The `_shared` bucket
+ * uses the same structure. Memories learned chatting to one character
+ * never leak into another.
  */
 function memoriesDir(gp: GlobalPaths, characterSlug: string): string {
-  return path.join(gp.playground, "learned", characterSlug || SHARED_NAMESPACE);
+  const slug = characterSlug || SHARED_NAMESPACE;
+  return path.join(gp.playground, slug, "learned");
 }
 
 function memoriesFile(gp: GlobalPaths, characterSlug: string): string {

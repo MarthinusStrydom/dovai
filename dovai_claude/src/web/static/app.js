@@ -1705,16 +1705,18 @@ const chatState = {
 
 async function loadChatTab() {
   try {
+    // Each character is isolated — the chat list shows only the selected
+    // character's chats (or _shared's for "No character"). The dropdown
+    // decides which bucket to load.
+    const slug = $("#chat-character")?.value || "_shared";
     const [chatsRes, charactersRes, modelsRes] = await Promise.all([
-      api("GET", "/api/playground/chats"),
+      api("GET", `/api/playground/chats?character=${encodeURIComponent(slug)}`),
       api("GET", "/api/playground/characters"),
       api("GET", "/api/playground/models").catch(() => ({ models: [] })),
     ]);
     chatState.chats = chatsRes.chats || [];
     chatState.characters = charactersRes.characters || [];
-    // Memories are per-character — load for the currently-selected character
-    // (or _shared if none is selected). Reloaded on character change + after each turn.
-    const slug = $("#chat-character")?.value || "_shared";
+    // Memories are per-character — load for the currently-selected character.
     const memoriesRes = await api("GET", `/api/playground/characters/${encodeURIComponent(slug)}/memories`).catch(() => ({ memories: [] }));
     chatState.models = modelsRes.models || [];
     chatState.memories = memoriesRes.memories || [];
@@ -2307,7 +2309,8 @@ function parseSSEBlock(block) {
 
 async function refreshChatListOnly() {
   try {
-    const r = await api("GET", "/api/playground/chats");
+    const slug = $("#chat-character")?.value || "_shared";
+    const r = await api("GET", `/api/playground/chats?character=${encodeURIComponent(slug)}`);
     chatState.chats = r.chats || [];
     renderChatList();
   } catch { /* ignore */ }
@@ -2491,9 +2494,9 @@ $("#chat-new-character")?.addEventListener("click", () => {
 });
 $("#chat-character")?.addEventListener("change", async () => {
   updateDeleteCharacterVisibility();
-  // Memories are per-character — reload whenever the dropdown changes so
-  // the sidebar summary and modal reflect the selected character's profile.
-  await refreshMemories();
+  // Switching character re-scopes the sidebar: chat list + memory summary
+  // both follow. loadChatTab() reloads both from the selected bucket.
+  await loadChatTab();
 });
 $("#chat-delete-character")?.addEventListener("click", async () => {
   const slug = $("#chat-character").value;

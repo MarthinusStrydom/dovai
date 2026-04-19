@@ -7,30 +7,28 @@
  *
  * Core concepts:
  *
- *   **Character** (formerly "preset") — an isolated AI agent with its own
- *   voice (system prompt), model, optional Telegram bot, and its own
- *   memory namespace. Memories learned in chats with one character never
- *   leak into another character's profile.
+ *   **Character** — an isolated AI agent with its own voice (system
+ *   prompt), model, optional Telegram bot, and its own chats + memory.
+ *   Each character gets its own top-level folder on disk.
  *
- *   **Chat** — a conversation. Each chat is bound to at most one character
- *   (snapshot at creation time). Chats without a character route memory
- *   to a shared "_shared" namespace.
+ *   **Chat** — a conversation. Bound to at most one character at creation.
+ *   Lives inside that character's folder. Chats with no character go to
+ *   the `_shared/` bucket.
  *
- * Layout:
+ * Layout (v3 "nested per character"):
  *
  *   playground/
- *     characters/
- *       <slug>.md                — character definition (md + frontmatter)
- *     chats/
- *       <id>/
- *         meta.json              — title, timestamps, character slug, model
- *         messages.jsonl         — one JSON per message
- *         images/<filename>      — uploaded images
- *     learned/
- *       <character_slug>/        — per-character memory namespace
- *         memories.jsonl
- *       _shared/                 — memory for no-character chats
- *         memories.jsonl
+ *     _shared/                       — no-character bucket
+ *       chats/<id>/                  — meta.json, messages.jsonl, images/
+ *       learned/memories.jsonl       — shared memory
+ *     <character_slug>/              — one folder per character
+ *       character.md                 — definition (markdown + frontmatter)
+ *       chats/<id>/                  — chats bound to this character
+ *       learned/memories.jsonl       — character's own memory namespace
+ *
+ * Deleting a character = deleting its folder. Copying/backing up a
+ * character = copying its folder. One mental model, matching the
+ * architecture.
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -38,55 +36,169 @@ import path from "node:path";
 import matter from "gray-matter";
 import type { GlobalPaths } from "./global_paths.ts";
 
+/** Reserved slug for no-character chats + memory. Also a real folder on disk. */
+export const SHARED_BUCKET = "_shared";
+
 // ---------------------------------------------------------------------------
-// One-time migration from v1 layout (preset-based) to v2 (character-based)
+// Path helpers — all routes to disk go through these
+// ---------------------------------------------------------------------------
+
+function normaliseSlug(characterSlug: string | null | undefined): string {
+  if (!characterSlug || !String(characterSlug).trim()) return SHARED_BUCKET;
+  return String(characterSlug).trim();
+}
+
+/** Root folder for a character (or `_shared`). */
+export function characterRoot(gp: GlobalPaths, characterSlug: string | null | undefined): string {
+  return path.join(gp.playground, normaliseSlug(characterSlug));
+}
+
+/** Location of a character's definition file. Not valid for `_shared`. */
+export function characterDefFile(gp: GlobalPaths, slug: string): string {
+  return path.join(gp.playground, slug, "character.md");
+}
+
+/** Folder holding a character's (or _shared's) chat directories. */
+export function chatsRoot(gp: GlobalPaths, characterSlug: string | null | undefined): string {
+  return path.join(characterRoot(gp, characterSlug), "chats");
+}
+
+/** Folder for a specific chat. */
+export function chatDirFor(gp: GlobalPaths, characterSlug: string | null | undefined, chatId: string): string {
+  return path.join(chatsRoot(gp, characterSlug), chatId);
+}
+
+// ---------------------------------------------------------------------------
+// Migration from any earlier layout to the current nested-per-character one.
+// Idempotent — safe to call on every server start.
 // ---------------------------------------------------------------------------
 
 /**
- * Run once on server startup. Renames v1 folders/files in place if v2
- * doesn't already exist. Idempotent — safe to call repeatedly.
+ * Reorganise the playground into the v3 nested layout. Handles three prior
+ * layouts in one pass:
+ *
+ *   v1 (oldest): presets/<slug>.md, chats/<id>/, learned/memories.jsonl
+ *   v2:          characters/<slug>.md, chats/<id>/, learned/<slug>/memories.jsonl
+ *   v3 (now):    <slug>/{character.md, chats/, learned/memories.jsonl}
+ *
+ * Moves instead of copies (fs.renameSync where possible). Never deletes user
+ * data; only moves it around and removes genuinely empty source dirs.
  */
-export function migrateV1ToV2(gp: GlobalPaths): void {
-  const playground = gp.playground;
-  // 1) presets/ → characters/
-  // `characters/` may already exist as an empty dir from `initGlobalDovai`
-  // scaffolding, so we can't just "rename if target missing". Instead:
-  //   - if characters/ is empty → move all files in from presets/ and drop presets/
-  //   - if characters/ already has contents → leave presets/ alone
-  //     (user has started using the new location; don't clobber)
-  const oldPresets = path.join(playground, "presets");
-  const newCharacters = gp.playgroundCharacters;
-  if (fs.existsSync(oldPresets)) {
-    const newIsEmpty =
-      !fs.existsSync(newCharacters) ||
-      fs.readdirSync(newCharacters).filter((f) => !f.startsWith(".")).length === 0;
-    if (newIsEmpty) {
-      fs.mkdirSync(newCharacters, { recursive: true });
-      for (const entry of fs.readdirSync(oldPresets)) {
-        try {
-          fs.renameSync(path.join(oldPresets, entry), path.join(newCharacters, entry));
-        } catch {
-          // fall through
-        }
-      }
-      // Remove the now-empty old dir
-      try { fs.rmdirSync(oldPresets); } catch { /* ignore */ }
+export function migrateToNestedLayout(gp: GlobalPaths): void {
+  const pg = gp.playground;
+  if (!fs.existsSync(pg)) return;
+
+  /**
+   * Safely remove a legacy directory after its contents have been moved.
+   * macOS drops `.DS_Store` files everywhere, so plain rmdir fails even
+   * when the folder has no real content. If the directory contains only
+   * dotfiles, nuke recursively. If it has real contents (something we
+   * didn't migrate), leave it alone — the user's data is never deleted.
+   */
+  const removeIfOnlyDotfiles = (dir: string): void => {
+    if (!fs.existsSync(dir)) return;
+    let entries: string[] = [];
+    try { entries = fs.readdirSync(dir); } catch { return; }
+    const nonDot = entries.filter((f) => !f.startsWith("."));
+    if (nonDot.length > 0) return; // real content present — leave it
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  };
+
+  // 1) Character definition files: presets/*.md OR characters/*.md → <slug>/character.md
+  for (const oldFolder of ["presets", "characters"]) {
+    const src = path.join(pg, oldFolder);
+    if (!fs.existsSync(src)) continue;
+    let entries: string[] = [];
+    try { entries = fs.readdirSync(src); } catch { continue; }
+    for (const file of entries) {
+      if (!file.endsWith(".md")) continue;
+      const slug = file.replace(/\.md$/, "");
+      if (slug === SHARED_BUCKET) continue; // paranoid — would clobber
+      const newFile = characterDefFile(gp, slug);
+      if (fs.existsSync(newFile)) continue; // already migrated
+      try {
+        fs.mkdirSync(path.dirname(newFile), { recursive: true });
+        fs.renameSync(path.join(src, file), newFile);
+      } catch { /* skip */ }
     }
+    removeIfOnlyDotfiles(src);
   }
-  // 2) learned/memories.jsonl → learned/_shared/memories.jsonl
-  const learnedRoot = path.join(playground, "learned");
-  const oldFlatFile = path.join(learnedRoot, "memories.jsonl");
-  const sharedDir = path.join(learnedRoot, "_shared");
-  const sharedFile = path.join(sharedDir, "memories.jsonl");
-  if (fs.existsSync(oldFlatFile) && !fs.existsSync(sharedFile)) {
-    try {
-      fs.mkdirSync(sharedDir, { recursive: true });
-      fs.renameSync(oldFlatFile, sharedFile);
-    } catch {
-      // fall through
+
+  // 2) Chats: flat chats/<id>/ → <slug>/chats/<id>/ (or _shared/chats/<id>/)
+  const oldChatsDir = path.join(pg, "chats");
+  if (fs.existsSync(oldChatsDir)) {
+    let chatEntries: fs.Dirent[] = [];
+    try { chatEntries = fs.readdirSync(oldChatsDir, { withFileTypes: true }); } catch { chatEntries = []; }
+    for (const e of chatEntries) {
+      if (!e.isDirectory()) continue;
+      const oldChatDir = path.join(oldChatsDir, e.name);
+      // Decide the destination bucket from the chat's own meta.json
+      let bucket = SHARED_BUCKET;
+      try {
+        const raw = fs.readFileSync(path.join(oldChatDir, "meta.json"), "utf8");
+        const meta = JSON.parse(raw);
+        // Accept both `character` and legacy `preset` field
+        const slug = (meta.character ?? meta.preset ?? null) as string | null;
+        if (slug && String(slug).trim() && slug !== SHARED_BUCKET) bucket = String(slug).trim();
+      } catch { /* leave as shared */ }
+      const newChatDir = path.join(pg, bucket, "chats", e.name);
+      if (fs.existsSync(newChatDir)) continue;
+      try {
+        fs.mkdirSync(path.dirname(newChatDir), { recursive: true });
+        fs.renameSync(oldChatDir, newChatDir);
+      } catch { /* skip this chat */ }
     }
+    removeIfOnlyDotfiles(oldChatsDir);
+  }
+
+  // 3) Memory files:
+  //    a) learned/memories.jsonl (v1 flat) → _shared/learned/memories.jsonl
+  //    b) learned/<slug>/memories.jsonl  → <slug>/learned/memories.jsonl
+  const oldLearnedDir = path.join(pg, "learned");
+  if (fs.existsSync(oldLearnedDir)) {
+    // 3a) flat file first
+    const flatFile = path.join(oldLearnedDir, "memories.jsonl");
+    if (fs.existsSync(flatFile)) {
+      const dest = path.join(pg, SHARED_BUCKET, "learned", "memories.jsonl");
+      if (!fs.existsSync(dest)) {
+        try {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.renameSync(flatFile, dest);
+        } catch { /* skip */ }
+      }
+    }
+    // 3b) subfolders (one per character/_shared)
+    let slugEntries: fs.Dirent[] = [];
+    try { slugEntries = fs.readdirSync(oldLearnedDir, { withFileTypes: true }); } catch { slugEntries = []; }
+    for (const e of slugEntries) {
+      if (!e.isDirectory()) continue;
+      const slug = e.name; // may be `_shared` or an actual character slug
+      const srcSlugDir = path.join(oldLearnedDir, slug);
+      const destSlugDir = path.join(pg, slug, "learned");
+      if (fs.existsSync(destSlugDir)) {
+        // Destination exists — move individual files in rather than clobber
+        let innerFiles: string[] = [];
+        try { innerFiles = fs.readdirSync(srcSlugDir); } catch { innerFiles = []; }
+        for (const f of innerFiles) {
+          const from = path.join(srcSlugDir, f);
+          const to = path.join(destSlugDir, f);
+          if (fs.existsSync(to)) continue;
+          try { fs.renameSync(from, to); } catch { /* skip */ }
+        }
+        removeIfOnlyDotfiles(srcSlugDir);
+      } else {
+        try {
+          fs.mkdirSync(path.dirname(destSlugDir), { recursive: true });
+          fs.renameSync(srcSlugDir, destSlugDir);
+        } catch { /* skip */ }
+      }
+    }
+    removeIfOnlyDotfiles(oldLearnedDir);
   }
 }
+
+/** Legacy alias so existing imports keep working during the transition. */
+export const migrateV1ToV2 = migrateToNestedLayout;
 
 // ---------------------------------------------------------------------------
 // Characters (formerly "Presets")
@@ -111,26 +223,32 @@ export interface Character extends CharacterFrontmatter {
   system_prompt: string;
 }
 
-function characterPath(gp: GlobalPaths, slug: string): string {
-  return path.join(gp.playgroundCharacters, `${slug}.md`);
-}
-
+/**
+ * Scan the playground root for folders that are Characters. A folder is
+ * a character iff it contains a `character.md` file with valid frontmatter.
+ * The `_shared` bucket is never treated as a character even if it somehow
+ * contained a stray `character.md`.
+ */
 export function listCharacters(gp: GlobalPaths): Character[] {
-  try {
-    const files = fs
-      .readdirSync(gp.playgroundCharacters)
-      .filter((f) => f.endsWith(".md"));
-    return files
-      .map((f) => loadCharacter(gp, f.replace(/\.md$/, "")))
-      .filter((c): c is Character => c !== null);
-  } catch {
-    return [];
+  let entries: fs.Dirent[] = [];
+  try { entries = fs.readdirSync(gp.playground, { withFileTypes: true }); } catch { return []; }
+  const out: Character[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (e.name === SHARED_BUCKET) continue;
+    if (e.name.startsWith(".")) continue;
+    const ch = loadCharacter(gp, e.name);
+    if (ch) out.push(ch);
   }
+  // Alphabetical — consistent UI ordering
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
 }
 
 export function loadCharacter(gp: GlobalPaths, slug: string): Character | null {
+  if (slug === SHARED_BUCKET) return null;
   try {
-    const raw = fs.readFileSync(characterPath(gp, slug), "utf8");
+    const raw = fs.readFileSync(characterDefFile(gp, slug), "utf8");
     const parsed = matter(raw);
     const fm = parsed.data as Partial<CharacterFrontmatter>;
     if (!fm.name || !fm.model) return null;
@@ -148,25 +266,42 @@ export function loadCharacter(gp: GlobalPaths, slug: string): Character | null {
   }
 }
 
+/**
+ * Write a character's definition + ensure its `chats/` and `learned/`
+ * subfolders exist. Creating the full folder layout on save keeps "new
+ * character" atomic: one button creates the whole structure.
+ */
 export function saveCharacter(
   gp: GlobalPaths,
   slug: string,
   fm: CharacterFrontmatter,
   systemPrompt: string,
 ): void {
-  fs.mkdirSync(gp.playgroundCharacters, { recursive: true });
-  // Strip undefined values — js-yaml can't serialize them.
+  if (slug === SHARED_BUCKET) {
+    throw new Error(`"${SHARED_BUCKET}" is reserved and cannot be used as a character slug`);
+  }
+  const root = characterRoot(gp, slug);
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(path.join(root, "chats"), { recursive: true });
+  fs.mkdirSync(path.join(root, "learned"), { recursive: true });
+  // Strip undefined / empty values — js-yaml can't serialize undefined.
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(fm)) {
     if (v !== undefined && v !== "") cleaned[k] = v;
   }
   const out = matter.stringify(systemPrompt, cleaned);
-  fs.writeFileSync(characterPath(gp, slug), out);
+  fs.writeFileSync(characterDefFile(gp, slug), out);
 }
 
+/**
+ * Delete a character's entire folder (definition + chats + learned + images).
+ * This is intentional — the UI warns the user, and the folder structure
+ * makes "delete everything about this character" a single operation.
+ */
 export function deleteCharacter(gp: GlobalPaths, slug: string): boolean {
+  if (slug === SHARED_BUCKET) return false;
   try {
-    fs.unlinkSync(characterPath(gp, slug));
+    fs.rmSync(characterRoot(gp, slug), { recursive: true, force: true });
     return true;
   } catch {
     return false;
@@ -217,10 +352,6 @@ export interface ChatMeta {
   telegram_chat_id?: number | string;
 }
 
-function chatDir(gp: GlobalPaths, id: string): string {
-  return path.join(gp.playgroundChats, id);
-}
-
 export function slugifyForId(text: string): string {
   return text
     .toLowerCase()
@@ -234,29 +365,63 @@ export function newChatId(title: string): string {
   return `${ts}_${slugifyForId(title || "new_chat")}`;
 }
 
-export function listChats(gp: GlobalPaths): ChatMeta[] {
-  try {
-    const entries = fs.readdirSync(gp.playgroundChats, { withFileTypes: true });
-    const out: ChatMeta[] = [];
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const meta = loadChatMeta(gp, e.name);
-      if (meta) out.push(meta);
+/**
+ * Scan every known bucket (every character folder + `_shared/`) for their
+ * `chats/` subfolder. Returns a flat list of chat directories: where each
+ * chat physically lives on disk + its bucket slug.
+ *
+ * Used internally to (a) list all chats, (b) look up a chat by id without
+ * knowing its character.
+ */
+function listAllChatDirs(gp: GlobalPaths): Array<{ bucket: string; id: string; dir: string }> {
+  const out: Array<{ bucket: string; id: string; dir: string }> = [];
+  let buckets: fs.Dirent[] = [];
+  try { buckets = fs.readdirSync(gp.playground, { withFileTypes: true }); } catch { return out; }
+  for (const b of buckets) {
+    if (!b.isDirectory()) continue;
+    if (b.name.startsWith(".")) continue;
+    const chatsDir = path.join(gp.playground, b.name, "chats");
+    if (!fs.existsSync(chatsDir)) continue;
+    let chatEntries: fs.Dirent[] = [];
+    try { chatEntries = fs.readdirSync(chatsDir, { withFileTypes: true }); } catch { continue; }
+    for (const c of chatEntries) {
+      if (!c.isDirectory()) continue;
+      out.push({ bucket: b.name, id: c.name, dir: path.join(chatsDir, c.name) });
     }
-    // Newest first
-    out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-    return out;
-  } catch {
-    return [];
   }
+  return out;
 }
 
-export function loadChatMeta(gp: GlobalPaths, id: string): ChatMeta | null {
+/** Locate the on-disk folder for a chat by id. Null if not found. */
+export function findChatDir(gp: GlobalPaths, chatId: string): string | null {
+  const hit = listAllChatDirs(gp).find((c) => c.id === chatId);
+  return hit?.dir ?? null;
+}
+
+/**
+ * List every chat across every bucket. Filter optional — pass a character
+ * slug (or `_shared`) to limit the list to that bucket.
+ */
+export function listChats(gp: GlobalPaths, filterSlug?: string | null): ChatMeta[] {
+  const out: ChatMeta[] = [];
+  for (const rec of listAllChatDirs(gp)) {
+    if (filterSlug !== undefined && filterSlug !== null) {
+      // `_shared` is valid as a filter; the bucket name matches.
+      if (rec.bucket !== normaliseSlug(filterSlug)) continue;
+    }
+    const meta = loadChatMetaFromDir(rec.dir);
+    if (meta) out.push(meta);
+  }
+  out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  return out;
+}
+
+function loadChatMetaFromDir(dir: string): ChatMeta | null {
   try {
-    const raw = fs.readFileSync(path.join(chatDir(gp, id), "meta.json"), "utf8");
+    const raw = fs.readFileSync(path.join(dir, "meta.json"), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.id !== "string" || typeof parsed.title !== "string") return null;
-    // Back-compat: v1 used `preset` instead of `character`. Accept either.
+    // Back-compat: v1 used `preset` instead of `character`.
     if (!("character" in parsed) && "preset" in parsed) {
       parsed.character = parsed.preset;
       delete parsed.preset;
@@ -267,9 +432,15 @@ export function loadChatMeta(gp: GlobalPaths, id: string): ChatMeta | null {
   }
 }
 
+export function loadChatMeta(gp: GlobalPaths, id: string): ChatMeta | null {
+  const dir = findChatDir(gp, id);
+  if (!dir) return null;
+  return loadChatMetaFromDir(dir);
+}
+
 /**
  * Find an existing chat by (character slug, Telegram chat_id). Used to
- * re-use a single persistent chat per Telegram conversation instead of
+ * reuse a single persistent chat per Telegram conversation instead of
  * creating a new one on every incoming message.
  */
 export function findChatByTelegramBinding(
@@ -277,11 +448,10 @@ export function findChatByTelegramBinding(
   characterSlug: string | null,
   telegramChatId: number | string,
 ): ChatMeta | null {
-  const all = listChats(gp);
+  const all = listChats(gp, characterSlug ?? undefined);
   const tgKey = String(telegramChatId);
   for (const c of all) {
     if (String(c.telegram_chat_id ?? "") !== tgKey) continue;
-    if ((c.character ?? null) !== (characterSlug ?? null)) continue;
     return c;
   }
   return null;
@@ -290,7 +460,7 @@ export function findChatByTelegramBinding(
 export function createChat(gp: GlobalPaths, meta: Omit<ChatMeta, "created_at" | "updated_at">): ChatMeta {
   const now = new Date().toISOString();
   const full: ChatMeta = { ...meta, created_at: now, updated_at: now };
-  const dir = chatDir(gp, full.id);
+  const dir = chatDirFor(gp, full.character, full.id);
   fs.mkdirSync(dir, { recursive: true });
   fs.mkdirSync(path.join(dir, "images"), { recursive: true });
   fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(full, null, 2));
@@ -299,16 +469,20 @@ export function createChat(gp: GlobalPaths, meta: Omit<ChatMeta, "created_at" | 
 }
 
 export function updateChatMeta(gp: GlobalPaths, id: string, patch: Partial<ChatMeta>): ChatMeta | null {
-  const meta = loadChatMeta(gp, id);
+  const dir = findChatDir(gp, id);
+  if (!dir) return null;
+  const meta = loadChatMetaFromDir(dir);
   if (!meta) return null;
   const updated: ChatMeta = { ...meta, ...patch, updated_at: new Date().toISOString() };
-  fs.writeFileSync(path.join(chatDir(gp, id), "meta.json"), JSON.stringify(updated, null, 2));
+  fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(updated, null, 2));
   return updated;
 }
 
 export function readMessages(gp: GlobalPaths, id: string): ChatMessage[] {
+  const dir = findChatDir(gp, id);
+  if (!dir) return [];
   try {
-    const raw = fs.readFileSync(path.join(chatDir(gp, id), "messages.jsonl"), "utf8");
+    const raw = fs.readFileSync(path.join(dir, "messages.jsonl"), "utf8");
     return raw
       .split("\n")
       .filter((l) => l.trim())
@@ -319,16 +493,17 @@ export function readMessages(gp: GlobalPaths, id: string): ChatMessage[] {
 }
 
 export function appendMessage(gp: GlobalPaths, id: string, msg: ChatMessage): void {
+  const dir = findChatDir(gp, id);
+  if (!dir) throw new Error(`chat not found: ${id}`);
   const withTs: ChatMessage = { ...msg, ts: msg.ts ?? new Date().toISOString() };
-  fs.appendFileSync(
-    path.join(chatDir(gp, id), "messages.jsonl"),
-    JSON.stringify(withTs) + "\n",
-  );
+  fs.appendFileSync(path.join(dir, "messages.jsonl"), JSON.stringify(withTs) + "\n");
 }
 
 export async function deleteChat(gp: GlobalPaths, id: string): Promise<boolean> {
+  const dir = findChatDir(gp, id);
+  if (!dir) return false;
   try {
-    await fsp.rm(chatDir(gp, id), { recursive: true, force: true });
+    await fsp.rm(dir, { recursive: true, force: true });
     return true;
   } catch {
     return false;
@@ -351,16 +526,27 @@ export function saveImageDataUrl(gp: GlobalPaths, chatId: string, dataUrl: strin
   const base = hint ? slugifyForId(hint) : "img";
   const ts = Date.now();
   const filename = `${ts}_${base}.${ext}`;
-  const full = path.join(chatDir(gp, chatId), "images", filename);
+  const dir = findChatDir(gp, chatId);
+  if (!dir) throw new Error(`chat not found: ${chatId}`);
+  const full = path.join(dir, "images", filename);
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, Buffer.from(m[3]!, "base64"));
   void mime; // reserved in case we want to store it later
   return filename;
 }
 
+/** Serve an image from a chat — used by the /images/:filename route. */
+export function resolveChatImage(gp: GlobalPaths, chatId: string, filename: string): string | null {
+  if (filename.includes("/") || filename.includes("..")) return null;
+  const dir = findChatDir(gp, chatId);
+  if (!dir) return null;
+  return path.join(dir, "images", filename);
+}
+
 export function readImageAsDataUrl(gp: GlobalPaths, chatId: string, filename: string): string | null {
+  const full = resolveChatImage(gp, chatId, filename);
+  if (!full) return null;
   try {
-    const full = path.join(chatDir(gp, chatId), "images", filename);
     const buf = fs.readFileSync(full);
     const ext = path.extname(filename).slice(1).toLowerCase() || "png";
     const mime = ext === "jpg" ? "jpeg" : ext;

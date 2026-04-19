@@ -67,16 +67,20 @@ export interface GlobalPaths {
   conversationLog: string;
 
   // ---- Playground (user's personal chat space, isolated from Sarah) ----
-  /** <playgroundRoot>/ — user-only, never indexed or seen by Sarah. */
-  playground: string;
   /**
-   * <playgroundRoot>/characters/ — saved characters (a.k.a. "presets" in
-   * v1): system prompt + model + memory store + optional Telegram bot.
-   * Each character is an isolated agent with its own voice and memory.
+   * <playgroundRoot>/ — user-only, never indexed or seen by Sarah.
+   *
+   * Each direct subfolder is either a Character (`<slug>/character.md`
+   * plus the character's own `chats/` and `learned/` subfolders) OR the
+   * `_shared/` bucket that holds chats with no character bound and their
+   * shared memory. This keeps everything about one character — voice,
+   * history, learned profile, images — physically together on disk, so
+   * deleting/copying/backing up a character is a single folder operation.
+   *
+   * Path helpers live in src/lib/playground.ts. No flat `characters/` or
+   * `chats/` directory exists in the v3 layout.
    */
-  playgroundCharacters: string;
-  /** <playgroundRoot>/chats/ — saved conversations, one folder each. */
-  playgroundChats: string;
+  playground: string;
 
   // ---- State-dir paths (local, ephemeral, machine-specific) ----
   logs: string;
@@ -280,8 +284,6 @@ export function globalPaths(): GlobalPaths {
     conversationLog: path.join(dataRoot, "state", "conversation_log.md"),
 
     playground: resolvePlaygroundRoot(dataRoot),
-    playgroundCharacters: path.join(resolvePlaygroundRoot(dataRoot), "characters"),
-    playgroundChats: path.join(resolvePlaygroundRoot(dataRoot), "chats"),
 
     // State-dir fields
     logs: path.join(stateRoot, "logs"),

@@ -60,6 +60,7 @@ import {
   deleteChat as deleteChatStorage,
   newChatId,
   saveImageDataUrl,
+  resolveChatImage,
   type ChatMessage,
   type ChatContentPart,
   type CharacterFrontmatter,
@@ -251,7 +252,13 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
   });
 
   // ---- Chats -------------------------------------------------------------
-  app.get("/api/playground/chats", (c) => c.json({ chats: listChats(ctx.global) }));
+  // Optional `?character=<slug>` query narrows the list to one bucket.
+  // Use `?character=_shared` for no-character chats.
+  app.get("/api/playground/chats", (c) => {
+    const filter = c.req.query("character");
+    const chats = filter ? listChats(ctx.global, filter) : listChats(ctx.global);
+    return c.json({ chats });
+  });
 
   app.post("/api/playground/chats", async (c) => {
     const body = (await c.req.json()) as {
@@ -311,10 +318,10 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
   app.get("/api/playground/chats/:id/images/:filename", (c) => {
     const id = c.req.param("id");
     const filename = c.req.param("filename");
-    if (filename.includes("/") || filename.includes("..")) {
-      return c.text("invalid filename", 400);
-    }
-    const full = path.join(ctx.global.playgroundChats, id, "images", filename);
+    // resolveChatImage handles path traversal guards + finding which
+    // character folder the chat lives in under the v3 layout.
+    const full = resolveChatImage(ctx.global, id, filename);
+    if (!full) return c.text("invalid", 400);
     try {
       const buf = fs.readFileSync(full);
       const ext = path.extname(filename).slice(1).toLowerCase() || "png";

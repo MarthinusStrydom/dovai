@@ -44,9 +44,11 @@ export function initGlobalDovai(gp: GlobalPaths): void {
     gp.telegramSent,
     gp.telegramFailed,
     path.dirname(gp.activityLedger), // <dataRoot>/state/ for activity.jsonl
+    // Playground: just scaffold the root + the _shared bucket. Character
+    // folders are created on-demand when the user saves a character.
     gp.playground,
-    gp.playgroundCharacters,
-    gp.playgroundChats,
+    path.join(gp.playground, "_shared", "chats"),
+    path.join(gp.playground, "_shared", "learned"),
   ];
   for (const d of dirs) {
     fs.mkdirSync(d, { recursive: true });
