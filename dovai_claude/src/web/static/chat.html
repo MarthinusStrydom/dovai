@@ -95,29 +95,57 @@
     </div>
   </div>
 
-  <!-- Memory manager modal -->
+  <!-- Memory manager modal — three views: Profile / Inferences / Observations -->
   <div id="chat-memory-modal" class="wizard-overlay hidden" aria-hidden="true">
-    <div class="wizard-card" style="max-width:720px;max-height:86vh;display:flex;flex-direction:column;">
-      <h2>What I've learned about you</h2>
-      <p class="muted small" style="margin:-4px 0 12px;">
-        These notes are gathered automatically from your chats and used to
-        adapt tone and content. You can delete, add, or edit anything here.
-        Stored locally in <code>~/Documents/Dovai_Playground/learned/</code>.
-      </p>
+    <div class="wizard-card" style="max-width:820px;max-height:88vh;display:flex;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div>
+          <h2 style="margin:0 0 4px;">What I'm learning about you</h2>
+          <p class="muted small" style="margin:0;">
+            Stored locally at <code>~/Documents/Dovai_Playground/learned/</code>.
+            Never synced. Never seen by Sarah.
+          </p>
+        </div>
+        <button id="chat-memory-reflect" class="secondary" title="Re-synthesise all inferences from current observations">
+          🔄 Rebuild profile
+        </button>
+      </div>
 
-      <div id="chat-memory-list" style="flex:1;overflow-y:auto;margin:0 -4px;padding:0 4px;"></div>
+      <!-- Tabs -->
+      <nav class="chat-memory-tabs" style="margin-top:12px;">
+        <button data-mtab="profile" class="active">Profile</button>
+        <button data-mtab="inferences">Inferences <span id="chat-memory-inf-count" class="muted"></span></button>
+        <button data-mtab="observations">Observations <span id="chat-memory-obs-count" class="muted"></span></button>
+      </nav>
+
+      <div style="flex:1;overflow-y:auto;margin:0 -4px;padding:12px 4px;min-height:200px;">
+        <!-- Profile view: rendered profile block -->
+        <div id="chat-memory-view-profile" class="chat-memory-view"></div>
+        <!-- Inferences view: list with confidence + evidence -->
+        <div id="chat-memory-view-inferences" class="chat-memory-view hidden"></div>
+        <!-- Observations view: ground-truth list -->
+        <div id="chat-memory-view-observations" class="chat-memory-view hidden"></div>
+      </div>
 
       <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;">
-        <label class="chat-page-label" style="margin-top:0;">Add a memory manually</label>
-        <div style="display:flex;gap:8px;">
-          <input id="chat-memory-add-text" placeholder="e.g. Prefers terse replies. No em dashes." style="flex:1;" />
-          <select id="chat-memory-add-category" style="width:160px;">
-            <option value="preference">preference</option>
-            <option value="biographical">biographical</option>
-            <option value="interest">interest</option>
-            <option value="communication">communication</option>
-            <option value="other">other</option>
+        <label class="chat-page-label" style="margin-top:0;">Add manually</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <select id="chat-memory-add-kind" style="width:130px;">
+            <option value="observation">Observation</option>
+            <option value="instruction">Instruction</option>
+            <option value="inference">Inference</option>
           </select>
+          <select id="chat-memory-add-dimension" style="width:150px;">
+            <option value="aesthetic">Aesthetic</option>
+            <option value="values">Values</option>
+            <option value="communication">Communication</option>
+            <option value="life_context">Life context</option>
+            <option value="cognitive">Cognitive</option>
+            <option value="emotional">Emotional</option>
+            <option value="self_concept">Self-concept</option>
+            <option value="other">Other</option>
+          </select>
+          <input id="chat-memory-add-text" placeholder="e.g. Prefers terse replies" style="flex:1;min-width:200px;" />
           <button id="chat-memory-add-btn" class="primary">Add</button>
         </div>
       </div>

@@ -34,6 +34,7 @@ import {
   composeMemoryBlock,
   runExtractionAndPersist,
   compactMemories,
+  reflectAndRebuildInferences,
 } from "../../lib/memories.ts";
 import {
   listPresets,
@@ -208,13 +209,26 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
   });
 
   app.post("/api/playground/memories", async (c) => {
-    const body = (await c.req.json()) as { text?: string; category?: string };
+    const body = (await c.req.json()) as {
+      text?: string;
+      kind?: "observation" | "inference" | "instruction";
+      dimension?: string;
+    };
     if (!body.text || !body.text.trim()) {
       return c.json({ error: "text required" }, 400);
     }
+    // deliberate narrow coerce: anything unexpected falls through to "other"
+    const validDims = [
+      "aesthetic", "values", "communication", "life_context",
+      "cognitive", "emotional", "self_concept", "other",
+    ] as const;
+    const dimension = validDims.includes(body.dimension as typeof validDims[number])
+      ? (body.dimension as typeof validDims[number])
+      : "other";
     const m = addMemory(ctx.global, {
       text: body.text,
-      category: body.category || "other",
+      kind: body.kind || "observation",
+      dimension,
       chat_id: null, // manually added
     });
     return c.json(m);
@@ -227,6 +241,33 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
 
   app.post("/api/playground/memories/compact", async (c) => {
     const result = await compactMemories(ctx.global);
+    return c.json(result);
+  });
+
+  /**
+   * Rebuild-inferences pass ("reflection"). Re-synthesises all inferences
+   * from the current set of observations. Useful when inferences have drifted
+   * or after several observations have been added/deleted.
+   */
+  app.post("/api/playground/memories/reflect", async (c) => {
+    const { data: pr } = loadProviderSettings(ctx.global);
+    const { data: ws } = loadWorkspaceSettings(ctx.global);
+    // Use the first configured model; user can change it later
+    // via a dedicated "extraction_model" setting if needed.
+    const modelsRes = await fetch(pr.lm_studio_url.replace(/\/+$/, "") + "/v1/models").catch(() => null);
+    let model = "";
+    if (modelsRes?.ok) {
+      const j = (await modelsRes.json()) as { data?: Array<{ id?: string }> };
+      model = j.data?.[0]?.id ?? "";
+    }
+    if (!model) return c.json({ error: "no model available from LM Studio" }, 502);
+    const result = await reflectAndRebuildInferences({
+      gp: ctx.global,
+      lmStudioUrl: pr.lm_studio_url,
+      model,
+      userName: ws.user_name,
+      logger: ctx.logger,
+    });
     return c.json(result);
   });
 
@@ -394,6 +435,7 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
         // instance, asynchronously, and must never block or break the
         // chat flow. Uses the latest messages (including the turn we
         // just completed) as the extraction input.
+        ctx.logger.info("memory extraction: scheduling", { chat_id: id, model: meta.model });
         void (async () => {
           try {
             const latest = readMessages(ctx.global, id);
@@ -404,6 +446,11 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
                 ? m.content
                 : (m.content.find((p) => p.type === "text") as ChatContentPart | undefined)?.text || "",
             }));
+            ctx.logger.info("memory extraction: starting", {
+              chat_id: id,
+              msg_count: flat.length,
+              user_text_preview: flat[flat.length - 2]?.content?.slice?.(0, 100),
+            });
             const added = await runExtractionAndPersist({
               gp: ctx.global,
               lmStudioUrl: pr.lm_studio_url,
@@ -411,14 +458,19 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
               userName: ws.user_name,
               chatId: id,
               messages: flat,
+              logger: ctx.logger,
             });
-            if (added > 0) {
-              ctx.logger.info("chat memories extracted", { chat_id: id, added });
-            }
+            ctx.logger.info("memory extraction: done", {
+              chat_id: id,
+              observations: added.observations,
+              inferences: added.inferences,
+              instructions: added.instructions,
+            });
           } catch (err) {
             ctx.logger.warn("memory extraction failed (non-fatal)", {
               chat_id: id,
               error: err instanceof Error ? err.message : String(err),
+              stack: err instanceof Error ? err.stack?.slice(0, 500) : undefined,
             });
           }
         })();

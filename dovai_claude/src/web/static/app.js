@@ -1727,18 +1727,24 @@ async function loadChatTab() {
 function renderMemorySummary() {
   const host = $("#chat-memory-summary");
   if (!host) return;
-  const count = chatState.memories.length;
-  if (count === 0) {
+  const all = chatState.memories;
+  if (all.length === 0) {
     host.innerHTML = `No memories yet. I'll learn as we chat.`;
     return;
   }
-  // Recent 2 memories, plus a count
-  const recent = chatState.memories.slice(0, 2).map((m) => `• ${escapeHtml(m.text)}`).join("<br>");
-  host.innerHTML = `<strong>${count}</strong> ${count === 1 ? "memory" : "memories"} so far:<br>${recent}`;
+  const obs = all.filter((m) => m.kind === "observation" || !m.kind).length;
+  const inf = all.filter((m) => m.kind === "inference").length;
+  const ins = all.filter((m) => m.kind === "instruction").length;
+  const parts = [];
+  if (inf > 0) parts.push(`<strong>${inf}</strong> inference${inf === 1 ? "" : "s"}`);
+  if (obs > 0) parts.push(`<strong>${obs}</strong> observation${obs === 1 ? "" : "s"}`);
+  if (ins > 0) parts.push(`<strong>${ins}</strong> instruction${ins === 1 ? "" : "s"}`);
+  host.innerHTML = parts.join(" · ") || `<strong>${all.length}</strong> memories`;
 }
 
 function openMemoryModal() {
-  renderMemoryList();
+  renderAllMemoryViews();
+  switchMemoryTab("profile");
   $("#chat-memory-modal").classList.remove("hidden");
   $("#chat-memory-modal").setAttribute("aria-hidden", "false");
   document.body.classList.add("wizard-modal-open");
@@ -1749,36 +1755,148 @@ function closeMemoryModal() {
   document.body.classList.remove("wizard-modal-open");
 }
 
-function renderMemoryList() {
-  const host = $("#chat-memory-list");
+function switchMemoryTab(name) {
+  $$(".chat-memory-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mtab === name));
+  $$(".chat-memory-view").forEach((v) => v.classList.add("hidden"));
+  $("#chat-memory-view-" + name)?.classList.remove("hidden");
+}
+
+function renderAllMemoryViews() {
+  const all = chatState.memories;
+  const obs = all.filter((m) => m.kind === "observation" || !m.kind);
+  const inf = all.filter((m) => m.kind === "inference");
+  const ins = all.filter((m) => m.kind === "instruction");
+  $("#chat-memory-inf-count").textContent = inf.length > 0 ? `(${inf.length})` : "";
+  $("#chat-memory-obs-count").textContent = obs.length > 0 ? `(${obs.length})` : "";
+  renderProfileView(all, inf, obs, ins);
+  renderInferencesView(inf, obs);
+  renderObservationsView(obs);
+}
+
+function renderProfileView(all, inf, obs, ins) {
+  const host = $("#chat-memory-view-profile");
   if (!host) return;
-  if (chatState.memories.length === 0) {
-    host.innerHTML = `<p class="muted small">No memories yet. Chat for a bit and I'll start picking up facts worth remembering, or add one manually below.</p>`;
+  if (all.length === 0) {
+    host.innerHTML = `<p class="muted">Nothing yet. Chat for a bit — as observations accumulate I'll start forming inferences about your tastes, values, and communication style. Click <em>Rebuild profile</em> any time to re-synthesise.</p>`;
+    return;
+  }
+  const dimensionOrder = [
+    ["communication", "Communication style"],
+    ["aesthetic", "Aesthetic sensibility"],
+    ["values", "Values"],
+    ["emotional", "Emotional patterns"],
+    ["cognitive", "Cognitive style"],
+    ["self_concept", "Self-concept"],
+    ["life_context", "Life context"],
+    ["other", "Other"],
+  ];
+  const lines = [];
+  if (ins.length > 0) {
+    lines.push(`<h3>⚡ Direct instructions</h3><ul>`);
+    for (const m of ins) lines.push(`<li>${escapeHtml(m.text)}</li>`);
+    lines.push(`</ul>`);
+  }
+  for (const [dim, label] of dimensionOrder) {
+    const dimInf = inf.filter((m) => m.dimension === dim).sort(
+      (a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence),
+    );
+    const dimObs = obs.filter((m) => m.dimension === dim);
+    if (dimInf.length === 0 && dimObs.length === 0) continue;
+    lines.push(`<h3>${label}</h3>`);
+    if (dimInf.length > 0) {
+      lines.push(`<ul>`);
+      for (const m of dimInf) {
+        const tag = m.confidence === "tentative"
+          ? `<em>(tentative)</em> `
+          : m.confidence === "probable"
+          ? `<em>(likely)</em> `
+          : "";
+        lines.push(`<li>${tag}${escapeHtml(m.text)}</li>`);
+      }
+      lines.push(`</ul>`);
+    }
+    if (dimObs.length > 0) {
+      lines.push(`<p><em>Supporting observations:</em> ${dimObs.map((o) => `"${escapeHtml(o.text)}"`).join("; ")}</p>`);
+    }
+  }
+  host.innerHTML = lines.join("");
+}
+
+function confidenceRank(c) {
+  if (c === "strong") return 3;
+  if (c === "probable") return 2;
+  if (c === "tentative") return 1;
+  return 0;
+}
+
+function renderInferencesView(inf, obs) {
+  const host = $("#chat-memory-view-inferences");
+  if (!host) return;
+  if (inf.length === 0) {
+    host.innerHTML = `<p class="muted">No inferences yet. As observations accumulate, patterns will surface here. You can also trigger a fresh synthesis with <em>Rebuild profile</em>.</p>`;
+    return;
+  }
+  const obsById = new Map(obs.map((o) => [o.id, o]));
+  host.innerHTML = "";
+  for (const m of inf) {
+    const el = document.createElement("div");
+    el.className = "chat-memory-item";
+    const evidenceTexts = (m.evidence_refs || [])
+      .map((id) => obsById.get(id))
+      .filter(Boolean)
+      .map((o) => `<span title="${escapeHtml(o.text)}" style="text-decoration:underline dotted;">${escapeHtml(o.text.slice(0, 40))}${o.text.length > 40 ? "…" : ""}</span>`)
+      .join(", ");
+    el.innerHTML = `
+      <span class="dim-label">${escapeHtml(m.dimension || "other")}</span>
+      <div style="flex:1;">
+        <div class="chat-memory-text">
+          <span class="conf-badge ${escapeHtml(m.confidence || "")}">${escapeHtml(m.confidence || "?")}</span>
+          ${escapeHtml(m.text)}
+        </div>
+        <div class="chat-memory-ts">
+          ${formatMemoryTs(m.ts)}
+          ${evidenceTexts ? ` — evidence: ${evidenceTexts}` : " — no evidence chain"}
+        </div>
+      </div>
+      <button class="chat-memory-del" title="Delete inference">✕</button>
+    `;
+    el.querySelector(".chat-memory-del").addEventListener("click", () => deleteMemoryAndRefresh(m.id));
+    host.appendChild(el);
+  }
+}
+
+function renderObservationsView(obs) {
+  const host = $("#chat-memory-view-observations");
+  if (!host) return;
+  if (obs.length === 0) {
+    host.innerHTML = `<p class="muted">No observations yet. Observations are things you've literally said, extracted from chats.</p>`;
     return;
   }
   host.innerHTML = "";
-  for (const m of chatState.memories) {
+  for (const m of obs) {
     const el = document.createElement("div");
     el.className = "chat-memory-item";
     el.innerHTML = `
-      <span class="chat-memory-cat">${escapeHtml(m.category || "other")}</span>
+      <span class="dim-label">${escapeHtml(m.dimension || "other")}</span>
       <div style="flex:1;">
         <div class="chat-memory-text">${escapeHtml(m.text)}</div>
         <div class="chat-memory-ts">${formatMemoryTs(m.ts)}${m.chat_id ? " — from a chat" : " — manually added"}</div>
       </div>
-      <button class="chat-memory-del" title="Delete memory">✕</button>
+      <button class="chat-memory-del" title="Delete observation">✕</button>
     `;
-    el.querySelector(".chat-memory-del").addEventListener("click", async () => {
-      if (!confirm("Delete this memory?")) return;
-      try {
-        await api("DELETE", "/api/playground/memories/" + encodeURIComponent(m.id));
-        await refreshMemories();
-        renderMemoryList();
-      } catch (err) {
-        alert("Could not delete: " + err.message);
-      }
-    });
+    el.querySelector(".chat-memory-del").addEventListener("click", () => deleteMemoryAndRefresh(m.id));
     host.appendChild(el);
+  }
+}
+
+async function deleteMemoryAndRefresh(id) {
+  if (!confirm("Delete this memory?")) return;
+  try {
+    await api("DELETE", "/api/playground/memories/" + encodeURIComponent(id));
+    await refreshMemories();
+    renderAllMemoryViews();
+  } catch (err) {
+    alert("Could not delete: " + err.message);
   }
 }
 
@@ -1799,20 +1917,45 @@ async function refreshMemories() {
     const r = await api("GET", "/api/playground/memories");
     chatState.memories = r.memories || [];
     renderMemorySummary();
+    // If the memory modal is open, re-render its contents too so newly-
+    // extracted memories appear immediately.
+    if (!$("#chat-memory-modal")?.classList.contains("hidden")) {
+      renderAllMemoryViews();
+    }
   } catch { /* ignore */ }
 }
 
 async function addMemoryManual() {
   const text = $("#chat-memory-add-text").value.trim();
-  const category = $("#chat-memory-add-category").value;
+  const kind = $("#chat-memory-add-kind").value;
+  const dimension = $("#chat-memory-add-dimension").value;
   if (!text) return;
   try {
-    await api("POST", "/api/playground/memories", { text, category });
+    await api("POST", "/api/playground/memories", { text, kind, dimension });
     $("#chat-memory-add-text").value = "";
     await refreshMemories();
-    renderMemoryList();
+    renderAllMemoryViews();
   } catch (err) {
     alert("Could not add memory: " + err.message);
+  }
+}
+
+async function rebuildProfile() {
+  const btn = $("#chat-memory-reflect");
+  if (!btn) return;
+  btn.disabled = true;
+  const oldText = btn.innerHTML;
+  btn.innerHTML = "🔄 Rebuilding…";
+  try {
+    const r = await api("POST", "/api/playground/memories/reflect");
+    await refreshMemories();
+    renderAllMemoryViews();
+    flash(`Rebuilt profile: ${r.added} inference${r.added === 1 ? "" : "s"}, ${r.superseded} superseded.`);
+  } catch (err) {
+    alert("Could not rebuild profile: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = oldText;
   }
 }
 
@@ -1821,6 +1964,10 @@ $("#chat-memory-close")?.addEventListener("click", closeMemoryModal);
 $("#chat-memory-add-btn")?.addEventListener("click", addMemoryManual);
 $("#chat-memory-add-text")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); addMemoryManual(); }
+});
+$("#chat-memory-reflect")?.addEventListener("click", rebuildProfile);
+$$(".chat-memory-tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => switchMemoryTab(btn.dataset.mtab));
 });
 
 function renderChatList() {

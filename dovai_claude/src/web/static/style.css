@@ -973,3 +973,74 @@ body:not(.chat-page) .chat-flash { display: none; }
   opacity: 0.6;
 }
 .chat-memory-item .chat-memory-del:hover { color: #ef4444; opacity: 1; }
+
+/* Memory modal tabs */
+.chat-memory-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.chat-memory-tabs button {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  min-height: 0;
+  font-size: 13px;
+  border-radius: 0;
+}
+.chat-memory-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.chat-memory-tabs button .muted { margin-left: 4px; font-size: 11px; }
+
+/* Profile view — rendered markdown-ish */
+.chat-memory-view { line-height: 1.55; }
+.chat-memory-view h3 {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.chat-memory-view p { margin: 6px 0; font-size: 14px; }
+.chat-memory-view ul { padding-left: 18px; margin: 4px 0; }
+.chat-memory-view li { margin-bottom: 4px; font-size: 14px; }
+.chat-memory-view em { color: var(--muted); font-style: italic; }
+.chat-memory-view code {
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+/* Confidence badges in inference list */
+.conf-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.conf-badge.tentative { border-color: #713f12; color: #fbbf24; }
+.conf-badge.probable { border-color: #1e3a8a; color: var(--accent); }
+.conf-badge.strong { border-color: #14532d; color: var(--ok); }
+
+/* Dimension label next to items */
+.dim-label {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 6px;
+}
