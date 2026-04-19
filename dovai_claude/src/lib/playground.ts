@@ -86,7 +86,13 @@ export function savePreset(
   systemPrompt: string,
 ): void {
   fs.mkdirSync(gp.playgroundPresets, { recursive: true });
-  const out = matter.stringify(systemPrompt, fm as unknown as Record<string, unknown>);
+  // Strip undefined values — js-yaml can't serialize them, and gray-matter
+  // blows up on "unacceptable kind of an object to dump [object Undefined]".
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fm)) {
+    if (v !== undefined) cleaned[k] = v;
+  }
+  const out = matter.stringify(systemPrompt, cleaned);
   fs.writeFileSync(presetPath(gp, slug), out);
 }
 
