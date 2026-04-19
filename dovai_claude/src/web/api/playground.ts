@@ -148,6 +148,38 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     return c.json({ ok });
   });
 
+  /**
+   * Telegram bot health check for a character. Calls Telegram's getMe
+   * endpoint to confirm the token is valid and the bot is reachable.
+   * Returns the bot's @username so the user can find it in Telegram.
+   */
+  app.get("/api/playground/characters/:slug/telegram/status", async (c) => {
+    const slug = c.req.param("slug");
+    const ch = loadCharacter(ctx.global, slug);
+    if (!ch) return c.json({ error: "not found" }, 404);
+    if (!ch.telegram_bot_token) return c.json({ configured: false });
+    try {
+      const res = await fetch(
+        `https://api.telegram.org/bot${ch.telegram_bot_token}/getMe`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      const j = (await res.json()) as { ok?: boolean; result?: { username?: string; first_name?: string } };
+      if (!j.ok) return c.json({ configured: true, reachable: false });
+      return c.json({
+        configured: true,
+        reachable: true,
+        username: j.result?.username,
+        first_name: j.result?.first_name,
+      });
+    } catch (err) {
+      return c.json({
+        configured: true,
+        reachable: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   // ---- Per-character memories --------------------------------------------
   // Memory is namespaced per character — a memory learned while chatting with
   // `book_voice` never appears when you're chatting with `code_reviewer`.

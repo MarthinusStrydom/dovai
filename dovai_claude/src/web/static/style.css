@@ -1044,3 +1044,11 @@ body:not(.chat-page) .chat-flash { display: none; }
   letter-spacing: 0.05em;
   margin-right: 6px;
 }
+
+/* Telegram badge in chat list */
+.chat-item-tg {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 12px;
+  opacity: 0.8;
+}

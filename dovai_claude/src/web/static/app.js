@@ -2005,8 +2005,9 @@ function renderChatList() {
       const item = document.createElement("div");
       item.className = "chat-list-item";
       if (c.id === chatState.currentChatId) item.classList.add("active");
+      const tgBadge = c.telegram_chat_id ? `<span class="chat-item-tg" title="Telegram chat">📱</span>` : "";
       item.innerHTML = `
-        <span class="chat-item-title">${escapeHtml(c.title)}</span>
+        <span class="chat-item-title">${tgBadge}${escapeHtml(c.title)}</span>
         <button class="chat-item-del" title="Delete">✕</button>
       `;
       item.addEventListener("click", (e) => {
@@ -2358,6 +2359,7 @@ function openCharacterEditor(slug) {
   $("#chat-character-maxtok").value = character?.max_tokens ?? "";
   $("#chat-character-tgtoken").value = character?.telegram_bot_token || "";
   $("#chat-character-prompt").value = character?.system_prompt || "";
+  refreshTelegramStatus(character?.slug);
   $("#chat-character-delete").classList.toggle("hidden", !character);
   $("#chat-character-error").classList.add("hidden");
   $("#chat-character-modal").classList.remove("hidden");
@@ -2368,6 +2370,35 @@ function closeCharacterEditor() {
   $("#chat-character-modal").classList.add("hidden");
   $("#chat-character-modal").setAttribute("aria-hidden", "true");
   document.body.classList.remove("wizard-modal-open");
+}
+
+/**
+ * Show the Telegram bot status below the token input. Calls Telegram's
+ * getMe through our backend proxy — surfaces the bot's @username if the
+ * token is valid, or the error otherwise.
+ */
+async function refreshTelegramStatus(slug) {
+  const el = $("#chat-character-tgstatus");
+  if (!el) return;
+  if (!slug) {
+    el.innerHTML = `Leave blank to disable Telegram for this character.`;
+    return;
+  }
+  el.innerHTML = `Checking…`;
+  try {
+    const r = await api("GET", `/api/playground/characters/${encodeURIComponent(slug)}/telegram/status`);
+    if (!r.configured) {
+      el.innerHTML = `Leave blank to disable Telegram for this character.`;
+    } else if (r.reachable) {
+      el.innerHTML = `✓ Bot reachable — DM <strong>@${escapeHtml(r.username || "")}</strong> from Telegram.`;
+      el.style.color = "var(--ok)";
+    } else {
+      el.innerHTML = `✗ Token set but Telegram can't reach the bot${r.error ? " (" + escapeHtml(r.error) + ")" : ""}.`;
+      el.style.color = "var(--err)";
+    }
+  } catch {
+    el.innerHTML = `(couldn't check status — the bot may still be fine)`;
+  }
 }
 
 async function saveCharacterFromEditor() {
@@ -2404,6 +2435,14 @@ async function saveCharacterFromEditor() {
     const sel = $("#chat-character");
     if (sel) sel.value = savedSlug;
     flash(`Saved character: ${name}`);
+    // If they set a Telegram token, quickly verify it's reachable and
+    // tell them in a toast — saves them wondering if the bot's alive.
+    if (tgToken) {
+      try {
+        const s = await api("GET", `/api/playground/characters/${encodeURIComponent(savedSlug)}/telegram/status`);
+        if (s.reachable) flash(`Telegram bot live: @${s.username}`);
+      } catch { /* ignore */ }
+    }
   } catch (err) {
     const e = $("#chat-character-error");
     e.textContent = err.message;
