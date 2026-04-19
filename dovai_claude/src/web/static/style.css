@@ -811,6 +811,14 @@ body.chat-page {
   overflow: hidden;
   height: 100vh;
 }
+/* Override the base `main { max-width: 840px; margin: 0 auto; padding: 14px }`
+   rule — on the chat page, the main panel should fill its grid column. */
+body.chat-page main.chat-page-main {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
 .chat-page-root {
   display: grid;
   grid-template-columns: 300px 1fr;
