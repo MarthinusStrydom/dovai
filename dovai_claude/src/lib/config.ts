@@ -19,6 +19,15 @@ export interface WorkspaceSettings {
   ai_job_description: string;
   /** Which AI CLI to use: "claude" (default) or "gemini". */
   ai_cli: string;
+  /**
+   * Override for where Chat-tab / playground content is stored. Supports
+   * `~/` home expansion. Empty means "use default"
+   * (~/Documents/Dovai_Playground/). Intentionally OUTSIDE the data dir so
+   * personal brainstorming doesn't sync to Drive. Change via Settings →
+   * Workspace if you want it somewhere else (e.g. a different local
+   * folder, or an encrypted volume).
+   */
+  playground_path: string;
 }
 
 export interface ProviderSettings {
@@ -83,6 +92,7 @@ const DEFAULT_WORKSPACE: WorkspaceSettings = {
   ai_name: "Sarah",
   ai_job_description: "Manager",
   ai_cli: "claude",
+  playground_path: "",
 };
 
 const DEFAULT_PROVIDERS: ProviderSettings = {

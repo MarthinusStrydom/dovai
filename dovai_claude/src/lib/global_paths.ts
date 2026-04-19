@@ -26,6 +26,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import matter from "gray-matter";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -161,6 +162,39 @@ export function dataDirPointerPath(stateRoot: string): string {
 }
 
 /**
+ * Where the user's Chat-tab content lives. Deliberately OUTSIDE the data
+ * dir so personal brainstorming doesn't sync to Drive. Resolution order:
+ *
+ *   1. `playground_path` in `<dataRoot>/settings/workspace.md` (supports
+ *      `~/` for home). Empty string falls through.
+ *   2. Default: `~/Documents/Dovai_Playground/`.
+ *
+ * Read directly (not via loadWorkspaceSettings) to avoid a circular
+ * dependency — this runs during GlobalPaths construction, which
+ * loadWorkspaceSettings itself needs.
+ */
+export function resolvePlaygroundRoot(dataRoot: string): string {
+  const settingsFile = path.join(dataRoot, "settings", "workspace.md");
+  try {
+    const raw = fs.readFileSync(settingsFile, "utf8");
+    const parsed = matter(raw);
+    const override = (parsed.data as { playground_path?: string })?.playground_path;
+    if (typeof override === "string" && override.trim()) {
+      return expandHome(override.trim());
+    }
+  } catch {
+    // settings file missing / unreadable — fine, fall through to default
+  }
+  return path.join(os.homedir(), "Documents", "Dovai_Playground");
+}
+
+function expandHome(p: string): string {
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+/**
  * Resolve the data dir. Reads `<stateRoot>/data_dir` if present.
  *
  * Returns `stateRoot` itself when no pointer exists — this keeps pre-migration
@@ -241,9 +275,9 @@ export function globalPaths(): GlobalPaths {
     activityLedger: path.join(dataRoot, "state", "activity.jsonl"),
     conversationLog: path.join(dataRoot, "state", "conversation_log.md"),
 
-    playground: path.join(dataRoot, "playground"),
-    playgroundPresets: path.join(dataRoot, "playground", "presets"),
-    playgroundChats: path.join(dataRoot, "playground", "chats"),
+    playground: resolvePlaygroundRoot(dataRoot),
+    playgroundPresets: path.join(resolvePlaygroundRoot(dataRoot), "presets"),
+    playgroundChats: path.join(resolvePlaygroundRoot(dataRoot), "chats"),
 
     // State-dir fields
     logs: path.join(stateRoot, "logs"),

@@ -8,30 +8,24 @@
 > This manual is the first thing you read when you wake. Read it top to
 > bottom every time before doing anything else.
 
-## 0a. `playground/` is off-limits. Always.
+## 0a. The user's Chat playground is off-limits
 
-There is a folder called `playground/` at the root of your working
-directory. It contains the user's personal chat sessions with the
-local LLM (via LM Studio), stored under `playground/chats/` and
-`playground/presets/`.
+The user has a personal chat interface (the Dovai web UI "Chat" tab)
+that they use for private brainstorming with the local LLM. Those
+chats are stored **outside your workspace** — by default at
+`~/Documents/Dovai_Playground/`, configurable via
+`settings/workspace.md` → `playground_path` — so you won't see them
+via relative paths from here.
 
-**These chats are private. They are not your business. Never:**
+**The only rule:** if you ever see an absolute path containing
+`Dovai_Playground` or `playground/`, do not read it. Say "that's the
+user's private playground, I can't help with that" and move on. Same
+applies to any file path that looks like personal chat history
+(`chats/<id>/messages.jsonl`, `presets/<slug>.md` under that folder).
 
-- Read any file under `playground/` — not even to "understand context"
-- List its contents (e.g. via Glob / Grep / ls) — you don't need to
-  know what's there
-- Reference anything from it in your replies
-- Mention it at all, even to say "I noticed you have chats there" — if
-  the user wants to discuss something from those chats, they'll paste
-  the relevant text into the CLI directly
-
-Playground chats are for personal brainstorming. Your work is under
-`tasks/`, `contacts/`, `sops/`, `dovai_files/`, `domains/`. Stay in
-those lanes.
-
-If you encounter a tool error or path you don't understand, and the
-path includes `playground/`, stop, report "playground is the user's
-private space, I can't help with that" and move on.
+You should basically never encounter these — they're not in your
+workspace, not referenced by any SOP, and not surfaced by any wake
+event. This rule is defensive; the architecture does the work.
 
 ## 0. Never launch `dovai` from inside your shell
 

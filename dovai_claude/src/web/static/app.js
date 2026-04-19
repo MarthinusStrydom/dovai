@@ -467,6 +467,7 @@ function fillWorkspaceForm(ws) {
   $("#ws-ai-name").value = ws.ai_name || "";
   $("#ws-ai-job").value = ws.ai_job_description || "";
   $("#ws-ai-cli").value = ws.ai_cli || "claude";
+  $("#ws-playground-path").value = ws.playground_path || "";
 }
 function readWorkspaceForm() {
   return {
@@ -476,6 +477,7 @@ function readWorkspaceForm() {
     ai_name: $("#ws-ai-name").value.trim() || "Sarah",
     ai_job_description: $("#ws-ai-job").value.trim() || "Manager",
     ai_cli: $("#ws-ai-cli").value,
+    playground_path: $("#ws-playground-path").value.trim(),
   };
 }
 function fillProvidersForm(pr) {
