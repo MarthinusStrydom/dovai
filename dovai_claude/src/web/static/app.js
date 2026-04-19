@@ -2086,6 +2086,7 @@ async function savePresetFromEditor() {
     max_tokens: isFinite(maxTok) ? maxTok : undefined,
     system_prompt: prompt,
   };
+  const savedSlug = editingPresetSlug ?? slug;
   try {
     if (editingPresetSlug) {
       await api("PUT", "/api/playground/presets/" + encodeURIComponent(editingPresetSlug), body);
@@ -2094,6 +2095,10 @@ async function savePresetFromEditor() {
     }
     closePresetEditor();
     await loadChatTab();
+    // Auto-select the preset we just saved so the user sees it's active.
+    const sel = $("#chat-preset");
+    if (sel) sel.value = savedSlug;
+    flash(`Saved preset: ${name}`);
   } catch (err) {
     const e = $("#chat-preset-error");
     e.textContent = err.message;
@@ -2131,7 +2136,14 @@ $("#chat-image-input")?.addEventListener("change", async (e) => {
 });
 $("#chat-edit-preset")?.addEventListener("click", () => {
   const cur = $("#chat-preset").value;
-  openPresetEditor(cur || null);
+  if (!cur) {
+    alert('Select a preset from the dropdown to edit it, or click "+ New preset" to create a new one.');
+    return;
+  }
+  openPresetEditor(cur);
+});
+$("#chat-new-preset")?.addEventListener("click", () => {
+  openPresetEditor(null);
 });
 $("#chat-preset-cancel")?.addEventListener("click", closePresetEditor);
 $("#chat-preset-save")?.addEventListener("click", savePresetFromEditor);
