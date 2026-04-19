@@ -1695,6 +1695,7 @@ const chatState = {
   chats: [],          // list from /api/playground/chats
   presets: [],        // list from /api/playground/presets
   models: [],         // list from /api/playground/models
+  memories: [],       // list from /api/playground/memories
   currentChatId: null,
   currentMeta: null,
   messages: [],
@@ -1704,21 +1705,123 @@ const chatState = {
 
 async function loadChatTab() {
   try {
-    const [chatsRes, presetsRes, modelsRes] = await Promise.all([
+    const [chatsRes, presetsRes, modelsRes, memoriesRes] = await Promise.all([
       api("GET", "/api/playground/chats"),
       api("GET", "/api/playground/presets"),
       api("GET", "/api/playground/models").catch(() => ({ models: [] })),
+      api("GET", "/api/playground/memories").catch(() => ({ memories: [] })),
     ]);
     chatState.chats = chatsRes.chats || [];
     chatState.presets = presetsRes.presets || [];
     chatState.models = modelsRes.models || [];
+    chatState.memories = memoriesRes.memories || [];
     renderChatList();
     renderPresetDropdown();
     renderModelDropdown();
+    renderMemorySummary();
   } catch (err) {
     alert("Failed to load chat data: " + err.message);
   }
 }
+
+function renderMemorySummary() {
+  const host = $("#chat-memory-summary");
+  if (!host) return;
+  const count = chatState.memories.length;
+  if (count === 0) {
+    host.innerHTML = `No memories yet. I'll learn as we chat.`;
+    return;
+  }
+  // Recent 2 memories, plus a count
+  const recent = chatState.memories.slice(0, 2).map((m) => `• ${escapeHtml(m.text)}`).join("<br>");
+  host.innerHTML = `<strong>${count}</strong> ${count === 1 ? "memory" : "memories"} so far:<br>${recent}`;
+}
+
+function openMemoryModal() {
+  renderMemoryList();
+  $("#chat-memory-modal").classList.remove("hidden");
+  $("#chat-memory-modal").setAttribute("aria-hidden", "false");
+  document.body.classList.add("wizard-modal-open");
+}
+function closeMemoryModal() {
+  $("#chat-memory-modal").classList.add("hidden");
+  $("#chat-memory-modal").setAttribute("aria-hidden", "true");
+  document.body.classList.remove("wizard-modal-open");
+}
+
+function renderMemoryList() {
+  const host = $("#chat-memory-list");
+  if (!host) return;
+  if (chatState.memories.length === 0) {
+    host.innerHTML = `<p class="muted small">No memories yet. Chat for a bit and I'll start picking up facts worth remembering, or add one manually below.</p>`;
+    return;
+  }
+  host.innerHTML = "";
+  for (const m of chatState.memories) {
+    const el = document.createElement("div");
+    el.className = "chat-memory-item";
+    el.innerHTML = `
+      <span class="chat-memory-cat">${escapeHtml(m.category || "other")}</span>
+      <div style="flex:1;">
+        <div class="chat-memory-text">${escapeHtml(m.text)}</div>
+        <div class="chat-memory-ts">${formatMemoryTs(m.ts)}${m.chat_id ? " — from a chat" : " — manually added"}</div>
+      </div>
+      <button class="chat-memory-del" title="Delete memory">✕</button>
+    `;
+    el.querySelector(".chat-memory-del").addEventListener("click", async () => {
+      if (!confirm("Delete this memory?")) return;
+      try {
+        await api("DELETE", "/api/playground/memories/" + encodeURIComponent(m.id));
+        await refreshMemories();
+        renderMemoryList();
+      } catch (err) {
+        alert("Could not delete: " + err.message);
+      }
+    });
+    host.appendChild(el);
+  }
+}
+
+function formatMemoryTs(iso) {
+  try {
+    const d = new Date(iso);
+    const today = new Date();
+    const sameDay = d.toISOString().slice(0, 10) === today.toISOString().slice(0, 10);
+    if (sameDay) return "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return iso;
+  }
+}
+
+async function refreshMemories() {
+  try {
+    const r = await api("GET", "/api/playground/memories");
+    chatState.memories = r.memories || [];
+    renderMemorySummary();
+  } catch { /* ignore */ }
+}
+
+async function addMemoryManual() {
+  const text = $("#chat-memory-add-text").value.trim();
+  const category = $("#chat-memory-add-category").value;
+  if (!text) return;
+  try {
+    await api("POST", "/api/playground/memories", { text, category });
+    $("#chat-memory-add-text").value = "";
+    await refreshMemories();
+    renderMemoryList();
+  } catch (err) {
+    alert("Could not add memory: " + err.message);
+  }
+}
+
+$("#chat-memory-view")?.addEventListener("click", openMemoryModal);
+$("#chat-memory-close")?.addEventListener("click", closeMemoryModal);
+$("#chat-memory-add-btn")?.addEventListener("click", addMemoryManual);
+$("#chat-memory-add-text")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addMemoryManual(); }
+});
 
 function renderChatList() {
   const host = $("#chat-list");
@@ -2009,6 +2112,10 @@ async function sendChatMessage() {
     placeholder.classList.remove("streaming");
     // Refresh chat list to update ordering / title
     await refreshChatListOnly();
+    // Extraction runs server-side after the stream completes; poll memories
+    // a short while later to reflect any newly-extracted ones in the sidebar.
+    setTimeout(refreshMemories, 3000);
+    setTimeout(refreshMemories, 10000);
   } catch (err) {
     placeholder.innerHTML = renderMessageText("(network error: " + err.message + ")");
     placeholder.classList.remove("streaming");

@@ -33,6 +33,12 @@
         <select id="chat-model"></select>
       </section>
 
+      <section class="chat-page-sidebar-section">
+        <label class="chat-page-label">What I've learned</label>
+        <div id="chat-memory-summary" class="chat-memory-summary">No memories yet.</div>
+        <button id="chat-memory-view" class="secondary" style="width:100%;margin-top:6px;">View / manage</button>
+      </section>
+
       <section class="chat-page-sidebar-section chat-page-sidebar-list-section">
         <label class="chat-page-label">Chats</label>
         <div id="chat-list" class="chat-list"></div>
@@ -85,6 +91,39 @@
           <button id="chat-preset-cancel" class="secondary">Cancel</button>
           <button id="chat-preset-save" class="primary">Save</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Memory manager modal -->
+  <div id="chat-memory-modal" class="wizard-overlay hidden" aria-hidden="true">
+    <div class="wizard-card" style="max-width:720px;max-height:86vh;display:flex;flex-direction:column;">
+      <h2>What I've learned about you</h2>
+      <p class="muted small" style="margin:-4px 0 12px;">
+        These notes are gathered automatically from your chats and used to
+        adapt tone and content. You can delete, add, or edit anything here.
+        Stored locally in <code>~/Documents/Dovai_Playground/learned/</code>.
+      </p>
+
+      <div id="chat-memory-list" style="flex:1;overflow-y:auto;margin:0 -4px;padding:0 4px;"></div>
+
+      <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;">
+        <label class="chat-page-label" style="margin-top:0;">Add a memory manually</label>
+        <div style="display:flex;gap:8px;">
+          <input id="chat-memory-add-text" placeholder="e.g. Prefers terse replies. No em dashes." style="flex:1;" />
+          <select id="chat-memory-add-category" style="width:160px;">
+            <option value="preference">preference</option>
+            <option value="biographical">biographical</option>
+            <option value="interest">interest</option>
+            <option value="communication">communication</option>
+            <option value="other">other</option>
+          </select>
+          <button id="chat-memory-add-btn" class="primary">Add</button>
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-top:16px;justify-content:flex-end;">
+        <button id="chat-memory-close" class="secondary">Close</button>
       </div>
     </div>
   </div>

@@ -26,7 +26,15 @@ import path from "node:path";
 import type { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ServerContext } from "../types.ts";
-import { loadProviderSettings } from "../../lib/config.ts";
+import { loadProviderSettings, loadWorkspaceSettings } from "../../lib/config.ts";
+import {
+  listMemories,
+  addMemory,
+  deleteMemory,
+  composeMemoryBlock,
+  runExtractionAndPersist,
+  compactMemories,
+} from "../../lib/memories.ts";
 import {
   listPresets,
   loadPreset,
@@ -194,6 +202,34 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     }
   });
 
+  // ---- Memories (the "what I know about you" layer) ---------------------
+  app.get("/api/playground/memories", (c) => {
+    return c.json({ memories: listMemories(ctx.global) });
+  });
+
+  app.post("/api/playground/memories", async (c) => {
+    const body = (await c.req.json()) as { text?: string; category?: string };
+    if (!body.text || !body.text.trim()) {
+      return c.json({ error: "text required" }, 400);
+    }
+    const m = addMemory(ctx.global, {
+      text: body.text,
+      category: body.category || "other",
+      chat_id: null, // manually added
+    });
+    return c.json(m);
+  });
+
+  app.delete("/api/playground/memories/:id", (c) => {
+    const ok = deleteMemory(ctx.global, c.req.param("id"));
+    return c.json({ ok });
+  });
+
+  app.post("/api/playground/memories/compact", async (c) => {
+    const result = await compactMemories(ctx.global);
+    return c.json(result);
+  });
+
   // ---- Messages: SSE stream ---------------------------------------------
   app.post("/api/playground/chats/:id/messages", async (c) => {
     const id = c.req.param("id");
@@ -260,8 +296,15 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
     const historyForModel = history
       .slice(0, -1)
       .map((m) => ({ role: m.role, content: m.content }));
-    const systemMessages = meta.system_prompt
-      ? [{ role: "system" as const, content: meta.system_prompt }]
+    // Load known memories and prepend as a context block on the system prompt.
+    // Fresh on every send so yesterday's learned facts land in today's turn.
+    const { data: ws } = loadWorkspaceSettings(ctx.global);
+    const memoryBlock = composeMemoryBlock(ctx.global, ws.user_name);
+    const combinedSystem = [meta.system_prompt, memoryBlock]
+      .filter((s) => s && s.trim())
+      .join("\n\n");
+    const systemMessages = combinedSystem
+      ? [{ role: "system" as const, content: combinedSystem }]
       : [];
     const messagesForModel = [
       ...systemMessages,
@@ -346,6 +389,39 @@ export function registerPlaygroundRoute(app: Hono, ctx: ServerContext): void {
         }
 
         await stream.writeSSE({ event: "done", data: JSON.stringify({ fullText }) });
+
+        // Fire-and-forget memory extraction — runs on the same LM Studio
+        // instance, asynchronously, and must never block or break the
+        // chat flow. Uses the latest messages (including the turn we
+        // just completed) as the extraction input.
+        void (async () => {
+          try {
+            const latest = readMessages(ctx.global, id);
+            // Convert multimodal parts to text for extraction (images aren't useful here)
+            const flat = latest.map((m) => ({
+              role: m.role,
+              content: typeof m.content === "string"
+                ? m.content
+                : (m.content.find((p) => p.type === "text") as ChatContentPart | undefined)?.text || "",
+            }));
+            const added = await runExtractionAndPersist({
+              gp: ctx.global,
+              lmStudioUrl: pr.lm_studio_url,
+              model: meta.model,
+              userName: ws.user_name,
+              chatId: id,
+              messages: flat,
+            });
+            if (added > 0) {
+              ctx.logger.info("chat memories extracted", { chat_id: id, added });
+            }
+          } catch (err) {
+            ctx.logger.warn("memory extraction failed (non-fatal)", {
+              chat_id: id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
       } catch (err) {
         await stream.writeSSE({
           event: "error",
