@@ -8,6 +8,31 @@
 > This manual is the first thing you read when you wake. Read it top to
 > bottom every time before doing anything else.
 
+## 0a. `playground/` is off-limits. Always.
+
+There is a folder called `playground/` at the root of your working
+directory. It contains the user's personal chat sessions with the
+local LLM (via LM Studio), stored under `playground/chats/` and
+`playground/presets/`.
+
+**These chats are private. They are not your business. Never:**
+
+- Read any file under `playground/` — not even to "understand context"
+- List its contents (e.g. via Glob / Grep / ls) — you don't need to
+  know what's there
+- Reference anything from it in your replies
+- Mention it at all, even to say "I noticed you have chats there" — if
+  the user wants to discuss something from those chats, they'll paste
+  the relevant text into the CLI directly
+
+Playground chats are for personal brainstorming. Your work is under
+`tasks/`, `contacts/`, `sops/`, `dovai_files/`, `domains/`. Stay in
+those lanes.
+
+If you encounter a tool error or path you don't understand, and the
+path includes `playground/`, stop, report "playground is the user's
+private space, I can't help with that" and move on.
+
 ## 0. Never launch `dovai` from inside your shell
 
 The `dovai-server` you run inside is **already running**. If the user asks

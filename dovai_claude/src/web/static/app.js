@@ -77,6 +77,7 @@ async function onTabShown(tab) {
   if (tab === "approvals") await loadDrafts();
   else if (tab === "tasks") await loadTasks();
   else if (tab === "sops") await loadSops();
+  else if (tab === "chat") await loadChatTab();
   else if (tab === "settings") await loadSettings();
   else if (tab === "logs") await loadLogs();
   else if (tab === "home") await loadHome();
@@ -1658,3 +1659,480 @@ setInterval(loadHome, 5000);
   history.replaceState(null, "", "/#settings");
   setTimeout(refreshGmailStatus, 300);
 })();
+
+// =========================================================================
+// CHAT TAB — user's private LM Studio playground
+// Walled off from Sarah: nothing written here is visible to her, and her
+// operator manual explicitly forbids touching playground/.
+// =========================================================================
+
+const chatState = {
+  chats: [],          // list from /api/playground/chats
+  presets: [],        // list from /api/playground/presets
+  models: [],         // list from /api/playground/models
+  currentChatId: null,
+  currentMeta: null,
+  messages: [],
+  attachedImages: [], // {dataUrl, name} pending for next send
+  streaming: false,
+};
+
+async function loadChatTab() {
+  try {
+    const [chatsRes, presetsRes, modelsRes] = await Promise.all([
+      api("GET", "/api/playground/chats"),
+      api("GET", "/api/playground/presets"),
+      api("GET", "/api/playground/models").catch(() => ({ models: [] })),
+    ]);
+    chatState.chats = chatsRes.chats || [];
+    chatState.presets = presetsRes.presets || [];
+    chatState.models = modelsRes.models || [];
+    renderChatList();
+    renderPresetDropdown();
+    renderModelDropdown();
+  } catch (err) {
+    alert("Failed to load chat data: " + err.message);
+  }
+}
+
+function renderChatList() {
+  const host = $("#chat-list");
+  if (!host) return;
+  if (chatState.chats.length === 0) {
+    host.innerHTML = '<div class="chat-list-group">No chats yet</div>';
+    return;
+  }
+  const groups = groupChatsByRecency(chatState.chats);
+  host.innerHTML = "";
+  for (const g of groups) {
+    const header = document.createElement("div");
+    header.className = "chat-list-group";
+    header.textContent = g.label;
+    host.appendChild(header);
+    for (const c of g.chats) {
+      const item = document.createElement("div");
+      item.className = "chat-list-item";
+      if (c.id === chatState.currentChatId) item.classList.add("active");
+      item.innerHTML = `
+        <span class="chat-item-title">${escapeHtml(c.title)}</span>
+        <button class="chat-item-del" title="Delete">✕</button>
+      `;
+      item.addEventListener("click", (e) => {
+        if (e.target.classList.contains("chat-item-del")) return;
+        openChat(c.id);
+      });
+      item.querySelector(".chat-item-del").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Delete chat "${c.title}"?`)) return;
+        await api("DELETE", "/api/playground/chats/" + encodeURIComponent(c.id));
+        if (chatState.currentChatId === c.id) {
+          chatState.currentChatId = null;
+          chatState.currentMeta = null;
+          chatState.messages = [];
+          renderMessages();
+        }
+        await loadChatTab();
+      });
+      host.appendChild(item);
+    }
+  }
+}
+
+function groupChatsByRecency(chats) {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const ydate = new Date(now.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const buckets = { today: [], yesterday: [], week: [], older: [] };
+  for (const c of chats) {
+    const d = c.updated_at.slice(0, 10);
+    if (d === today) buckets.today.push(c);
+    else if (d === ydate) buckets.yesterday.push(c);
+    else if (d > weekAgo) buckets.week.push(c);
+    else buckets.older.push(c);
+  }
+  const groups = [];
+  if (buckets.today.length) groups.push({ label: "Today", chats: buckets.today });
+  if (buckets.yesterday.length) groups.push({ label: "Yesterday", chats: buckets.yesterday });
+  if (buckets.week.length) groups.push({ label: "This week", chats: buckets.week });
+  if (buckets.older.length) groups.push({ label: "Older", chats: buckets.older });
+  return groups;
+}
+
+function renderPresetDropdown() {
+  const sel = $("#chat-preset");
+  if (!sel) return;
+  sel.innerHTML = '<option value="">No preset</option>';
+  for (const p of chatState.presets) {
+    const opt = document.createElement("option");
+    opt.value = p.slug;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  }
+  // If current chat has a preset, select it
+  if (chatState.currentMeta?.preset) sel.value = chatState.currentMeta.preset;
+}
+
+function renderModelDropdown() {
+  const sel = $("#chat-model");
+  if (!sel) return;
+  sel.innerHTML = "";
+  if (chatState.models.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(LM Studio unreachable)";
+    sel.appendChild(opt);
+    return;
+  }
+  for (const m of chatState.models) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    sel.appendChild(opt);
+  }
+  if (chatState.currentMeta?.model) sel.value = chatState.currentMeta.model;
+}
+
+async function openChat(id) {
+  try {
+    const r = await api("GET", "/api/playground/chats/" + encodeURIComponent(id));
+    chatState.currentChatId = id;
+    chatState.currentMeta = r.meta;
+    chatState.messages = r.messages || [];
+    $("#chat-title").textContent = r.meta.title;
+    $("#chat-model").value = r.meta.model || "";
+    $("#chat-preset").value = r.meta.preset || "";
+    renderMessages();
+    renderChatList();
+  } catch (err) {
+    alert("Could not open chat: " + err.message);
+  }
+}
+
+function renderMessages() {
+  const host = $("#chat-messages");
+  if (!host) return;
+  if (chatState.messages.length === 0) {
+    if (chatState.currentChatId) {
+      host.innerHTML = '<div class="chat-empty muted">Say something to start this chat.</div>';
+    } else {
+      host.innerHTML = '<div class="chat-empty muted">Pick a chat or start a new one.</div>';
+    }
+    return;
+  }
+  host.innerHTML = "";
+  for (const m of chatState.messages) {
+    const el = renderMessageElement(m);
+    host.appendChild(el);
+  }
+  host.scrollTop = host.scrollHeight;
+}
+
+function renderMessageElement(m) {
+  const el = document.createElement("div");
+  el.className = "chat-msg " + m.role;
+  if (typeof m.content === "string") {
+    el.innerHTML = renderMessageText(m.content);
+  } else if (Array.isArray(m.content)) {
+    for (const part of m.content) {
+      if (part.type === "text" && part.text) {
+        const t = document.createElement("div");
+        t.innerHTML = renderMessageText(part.text);
+        el.appendChild(t);
+      } else if (part.type === "image_url" && part.image_url?.url) {
+        const img = document.createElement("img");
+        img.src = part.image_url.url;
+        el.appendChild(img);
+      }
+    }
+  }
+  return el;
+}
+
+// Very light markdown-ish rendering: code fences + inline code + preserve newlines.
+function renderMessageText(text) {
+  // Escape first
+  let s = escapeHtml(text);
+  // Code fences ```lang\n...\n```
+  s = s.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre><code>${code}</code></pre>`
+  );
+  // Inline `code`
+  s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  return s;
+}
+
+async function newChat() {
+  const preset = $("#chat-preset").value || null;
+  const model = $("#chat-model").value;
+  if (!model) {
+    alert("Pick a model first (LM Studio may be offline).");
+    return;
+  }
+  try {
+    const meta = await api("POST", "/api/playground/chats", {
+      title: "New chat",
+      preset,
+      model,
+    });
+    chatState.currentChatId = meta.id;
+    chatState.currentMeta = meta;
+    chatState.messages = [];
+    await loadChatTab();
+    $("#chat-title").textContent = meta.title;
+    renderMessages();
+    $("#chat-input").focus();
+  } catch (err) {
+    alert("Could not create chat: " + err.message);
+  }
+}
+
+async function sendChatMessage() {
+  if (chatState.streaming) return;
+  const input = $("#chat-input");
+  const text = input.value.trim();
+  const images = chatState.attachedImages.map((a) => a.dataUrl);
+  if (!text && images.length === 0) return;
+
+  // Ensure we have a chat to send to
+  if (!chatState.currentChatId) await newChat();
+  if (!chatState.currentChatId) return;
+
+  // Optimistically render the user's message
+  const userMsg = {
+    role: "user",
+    content: images.length > 0
+      ? [
+          ...(text ? [{ type: "text", text }] : []),
+          ...images.map((du) => ({ type: "image_url", image_url: { url: du } })),
+        ]
+      : text,
+  };
+  chatState.messages.push(userMsg);
+  renderMessages();
+  input.value = "";
+  chatState.attachedImages = [];
+  renderAttachedImages();
+
+  // Placeholder assistant message we'll stream into
+  const assistantMsg = { role: "assistant", content: "" };
+  chatState.messages.push(assistantMsg);
+  const msgsHost = $("#chat-messages");
+  const placeholder = renderMessageElement(assistantMsg);
+  placeholder.classList.add("streaming");
+  msgsHost.appendChild(placeholder);
+  msgsHost.scrollTop = msgsHost.scrollHeight;
+
+  chatState.streaming = true;
+  $("#chat-send").disabled = true;
+
+  try {
+    const res = await fetch(
+      "/api/playground/chats/" + encodeURIComponent(chatState.currentChatId) + "/messages",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, images }),
+      }
+    );
+    if (!res.ok || !res.body) {
+      placeholder.innerHTML = renderMessageText("(error: " + res.status + ")");
+      placeholder.classList.remove("streaming");
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // Parse SSE blocks (event: xxx\ndata: yyy\n\n)
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const { event, data } = parseSSEBlock(block);
+        if (!data) continue;
+        try {
+          const payload = JSON.parse(data);
+          if (event === "delta" && payload.delta) {
+            fullText += payload.delta;
+            placeholder.innerHTML = renderMessageText(fullText);
+            msgsHost.scrollTop = msgsHost.scrollHeight;
+          } else if (event === "title" && payload.title) {
+            $("#chat-title").textContent = payload.title;
+            if (chatState.currentMeta) chatState.currentMeta.title = payload.title;
+          } else if (event === "error") {
+            placeholder.innerHTML = renderMessageText(
+              "(error: " + (payload.message || "unknown") + ")"
+            );
+          } else if (event === "done") {
+            assistantMsg.content = fullText;
+          }
+        } catch { /* ignore malformed */ }
+      }
+    }
+    placeholder.classList.remove("streaming");
+    // Refresh chat list to update ordering / title
+    await refreshChatListOnly();
+  } catch (err) {
+    placeholder.innerHTML = renderMessageText("(network error: " + err.message + ")");
+    placeholder.classList.remove("streaming");
+  } finally {
+    chatState.streaming = false;
+    $("#chat-send").disabled = false;
+    input.focus();
+  }
+}
+
+function parseSSEBlock(block) {
+  const lines = block.split("\n");
+  let event = "message";
+  let data = "";
+  for (const line of lines) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += (data ? "\n" : "") + line.slice(5).trimStart();
+  }
+  return { event, data };
+}
+
+async function refreshChatListOnly() {
+  try {
+    const r = await api("GET", "/api/playground/chats");
+    chatState.chats = r.chats || [];
+    renderChatList();
+  } catch { /* ignore */ }
+}
+
+function renderAttachedImages() {
+  const host = $("#chat-attached-images");
+  if (!host) return;
+  host.innerHTML = "";
+  chatState.attachedImages.forEach((a, i) => {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-attached-item";
+    const img = document.createElement("img");
+    img.src = a.dataUrl;
+    img.title = a.name;
+    const x = document.createElement("span");
+    x.className = "chat-attached-x";
+    x.textContent = "✕";
+    x.addEventListener("click", () => {
+      chatState.attachedImages.splice(i, 1);
+      renderAttachedImages();
+    });
+    wrap.appendChild(img);
+    wrap.appendChild(x);
+    host.appendChild(wrap);
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+// ---- Preset editor modal ----
+let editingPresetSlug = null; // null = creating new
+function openPresetEditor(slug) {
+  editingPresetSlug = slug;
+  const preset = slug ? chatState.presets.find((p) => p.slug === slug) : null;
+  $("#chat-preset-modal-title").textContent = preset ? "Edit preset" : "New preset";
+  $("#chat-preset-slug").value = preset?.slug || "";
+  $("#chat-preset-slug").disabled = !!preset;
+  $("#chat-preset-name").value = preset?.name || "";
+  $("#chat-preset-model").value = preset?.model || ($("#chat-model").value || "");
+  $("#chat-preset-temp").value = preset?.temperature ?? "";
+  $("#chat-preset-maxtok").value = preset?.max_tokens ?? "";
+  $("#chat-preset-prompt").value = preset?.system_prompt || "";
+  $("#chat-preset-delete").classList.toggle("hidden", !preset);
+  $("#chat-preset-error").classList.add("hidden");
+  $("#chat-preset-modal").classList.remove("hidden");
+  $("#chat-preset-modal").setAttribute("aria-hidden", "false");
+  document.body.classList.add("wizard-modal-open");
+}
+function closePresetEditor() {
+  $("#chat-preset-modal").classList.add("hidden");
+  $("#chat-preset-modal").setAttribute("aria-hidden", "true");
+  document.body.classList.remove("wizard-modal-open");
+}
+
+async function savePresetFromEditor() {
+  const slug = $("#chat-preset-slug").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  const name = $("#chat-preset-name").value.trim();
+  const model = $("#chat-preset-model").value.trim();
+  const temp = parseFloat($("#chat-preset-temp").value);
+  const maxTok = parseInt($("#chat-preset-maxtok").value, 10);
+  const prompt = $("#chat-preset-prompt").value;
+  if (!slug || !name || !model) {
+    const err = $("#chat-preset-error");
+    err.textContent = "Slug, name, and model are required.";
+    err.classList.remove("hidden");
+    return;
+  }
+  const body = {
+    name,
+    model,
+    temperature: isFinite(temp) ? temp : undefined,
+    max_tokens: isFinite(maxTok) ? maxTok : undefined,
+    system_prompt: prompt,
+  };
+  try {
+    if (editingPresetSlug) {
+      await api("PUT", "/api/playground/presets/" + encodeURIComponent(editingPresetSlug), body);
+    } else {
+      await api("POST", "/api/playground/presets", { slug, ...body });
+    }
+    closePresetEditor();
+    await loadChatTab();
+  } catch (err) {
+    const e = $("#chat-preset-error");
+    e.textContent = err.message;
+    e.classList.remove("hidden");
+  }
+}
+
+async function deletePresetFromEditor() {
+  if (!editingPresetSlug) return;
+  if (!confirm("Delete this preset? Chats already using it keep their copy of the prompt.")) return;
+  await api("DELETE", "/api/playground/presets/" + encodeURIComponent(editingPresetSlug));
+  closePresetEditor();
+  await loadChatTab();
+}
+
+// ---- Event wiring ----
+$("#chat-new-btn")?.addEventListener("click", newChat);
+$("#chat-send")?.addEventListener("click", sendChatMessage);
+$("#chat-input")?.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    sendChatMessage();
+  }
+});
+$("#chat-image-input")?.addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  for (const f of files) {
+    try {
+      const dataUrl = await readFileAsDataUrl(f);
+      chatState.attachedImages.push({ dataUrl, name: f.name });
+    } catch { /* skip */ }
+  }
+  e.target.value = ""; // reset so same file can be picked again
+  renderAttachedImages();
+});
+$("#chat-edit-preset")?.addEventListener("click", () => {
+  const cur = $("#chat-preset").value;
+  openPresetEditor(cur || null);
+});
+$("#chat-preset-cancel")?.addEventListener("click", closePresetEditor);
+$("#chat-preset-save")?.addEventListener("click", savePresetFromEditor);
+$("#chat-preset-delete")?.addEventListener("click", deletePresetFromEditor);
+
+// Tab-switch hook for "chat" is wired directly into onTabShown() above.

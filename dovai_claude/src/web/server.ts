@@ -36,6 +36,7 @@ import { registerBackupRoute } from "./api/backup_api.ts";
 import { registerSmartFoldersRoute } from "./api/smart_folders.ts";
 import { registerSetupRoute } from "./api/setup.ts";
 import { registerGmailAuthRoute } from "./api/gmail_auth.ts";
+import { registerPlaygroundRoute } from "./api/playground.ts";
 import { STATIC_DIR } from "../lib/paths.ts";
 import type { ServerContext } from "./types.ts";
 
@@ -93,6 +94,7 @@ export async function startWebServer(ctx: ServerContext, preferredPort = 0): Pro
   registerLogsRoute(app, ctx);
   registerSetupRoute(app, ctx);
   registerGmailAuthRoute(app, ctx);
+  registerPlaygroundRoute(app, ctx);
 
   return new Promise((resolve) => {
     const server = serve(

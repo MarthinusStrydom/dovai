@@ -44,6 +44,9 @@ export function initGlobalDovai(gp: GlobalPaths): void {
     gp.telegramSent,
     gp.telegramFailed,
     path.dirname(gp.activityLedger), // <dataRoot>/state/ for activity.jsonl
+    gp.playground,
+    gp.playgroundPresets,
+    gp.playgroundChats,
   ];
   for (const d of dirs) {
     fs.mkdirSync(d, { recursive: true });

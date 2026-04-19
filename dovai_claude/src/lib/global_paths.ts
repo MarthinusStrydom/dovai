@@ -65,6 +65,14 @@ export interface GlobalPaths {
   activityLedger: string;
   conversationLog: string;
 
+  // ---- Playground (user's personal chat space, isolated from Sarah) ----
+  /** <dataRoot>/playground/ — user-only, never indexed or seen by Sarah. */
+  playground: string;
+  /** <dataRoot>/playground/presets/ — saved system-prompt presets. */
+  playgroundPresets: string;
+  /** <dataRoot>/playground/chats/ — saved conversations, one folder each. */
+  playgroundChats: string;
+
   // ---- State-dir paths (local, ephemeral, machine-specific) ----
   logs: string;
   state: string;
@@ -232,6 +240,10 @@ export function globalPaths(): GlobalPaths {
     telegramFailed: path.join(dovaiFiles, "telegram", "failed"),
     activityLedger: path.join(dataRoot, "state", "activity.jsonl"),
     conversationLog: path.join(dataRoot, "state", "conversation_log.md"),
+
+    playground: path.join(dataRoot, "playground"),
+    playgroundPresets: path.join(dataRoot, "playground", "presets"),
+    playgroundChats: path.join(dataRoot, "playground", "chats"),
 
     // State-dir fields
     logs: path.join(stateRoot, "logs"),
