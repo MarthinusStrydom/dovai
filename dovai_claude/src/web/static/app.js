@@ -77,10 +77,10 @@ async function onTabShown(tab) {
   if (tab === "approvals") await loadDrafts();
   else if (tab === "tasks") await loadTasks();
   else if (tab === "sops") await loadSops();
-  else if (tab === "chat") await loadChatTab();
   else if (tab === "settings") await loadSettings();
   else if (tab === "logs") await loadLogs();
   else if (tab === "home") await loadHome();
+  // "chat" is no longer a tab — it's a separate page at /chat.html
 }
 
 // ------ home / status ------
@@ -1626,41 +1626,64 @@ function escapeHtml(s) {
 }
 
 function flash(msg) {
+  // On the main Dovai page, briefly update the status pill.
   const pill = $("#status-pill");
-  const prev = pill.textContent, prevClass = pill.className;
-  pill.textContent = msg;
-  pill.className = "status-pill ok";
-  setTimeout(() => { pill.textContent = prev; pill.className = prevClass; }, 1500);
+  if (pill) {
+    const prev = pill.textContent, prevClass = pill.className;
+    pill.textContent = msg;
+    pill.className = "status-pill ok";
+    setTimeout(() => { pill.textContent = prev; pill.className = prevClass; }, 1500);
+    return;
+  }
+  // On chat.html (no top bar), show a floating toast.
+  const toast = $("#chat-flash");
+  if (toast) {
+    toast.textContent = msg;
+    toast.classList.remove("hidden");
+    setTimeout(() => toast.classList.add("hidden"), 1800);
+    return;
+  }
+  // Fallback: no surface available, swallow silently.
 }
 
 // ------ init ------
-initTabs();
-initSettingsNav();
-loadDomains();
-loadHome();
-refreshSetup();
-setInterval(loadHome, 5000);
+// app.js is shared by the main Dovai UI (index.html) and the standalone
+// Chat page (chat.html). Run only the init relevant to the current page.
+const IS_CHAT_PAGE = document.body.classList.contains("chat-page");
 
-// If we're landing on the Gmail callback's redirect (/#settings?gmail=ok&msg=...),
-// jump straight to the Settings tab and surface the result.
-(function handleGmailCallbackLanding() {
-  const hash = window.location.hash || "";
-  const match = hash.match(/^#settings\?(.+)$/);
-  if (!match) return;
-  const params = new URLSearchParams(match[1]);
-  const gmail = params.get("gmail");
-  const msg = params.get("msg") || "";
-  if (!gmail) return;
-  // Show Settings tab
-  $(`#tabs button[data-tab="settings"]`)?.click();
-  // Jump to Channels sub-tab where the Gmail card lives
-  $(`#settings-nav button[data-stab="channels"]`)?.click();
-  if (gmail === "ok") flash(msg || "Gmail connected.");
-  else alert("Gmail connection failed: " + msg);
-  // Clean URL
-  history.replaceState(null, "", "/#settings");
-  setTimeout(refreshGmailStatus, 300);
-})();
+if (IS_CHAT_PAGE) {
+  // Standalone Chat page: just fire up the chat view.
+  loadChatTab();
+} else {
+  // Main Dovai UI: full init.
+  initTabs();
+  initSettingsNav();
+  loadDomains();
+  loadHome();
+  refreshSetup();
+  setInterval(loadHome, 5000);
+
+  // If we're landing on the Gmail callback's redirect
+  // (/#settings?gmail=ok&msg=...), jump straight to the Settings tab and
+  // surface the result.
+  (function handleGmailCallbackLanding() {
+    const hash = window.location.hash || "";
+    const match = hash.match(/^#settings\?(.+)$/);
+    if (!match) return;
+    const params = new URLSearchParams(match[1]);
+    const gmail = params.get("gmail");
+    const msg = params.get("msg") || "";
+    if (!gmail) return;
+    // Show Settings tab
+    $(`#tabs button[data-tab="settings"]`)?.click();
+    // Jump to Channels sub-tab where the Gmail card lives
+    $(`#settings-nav button[data-stab="channels"]`)?.click();
+    if (gmail === "ok") flash(msg || "Gmail connected.");
+    else alert("Gmail connection failed: " + msg);
+    history.replaceState(null, "", "/#settings");
+    setTimeout(refreshGmailStatus, 300);
+  })();
+}
 
 // =========================================================================
 // CHAT TAB — user's private LM Studio playground

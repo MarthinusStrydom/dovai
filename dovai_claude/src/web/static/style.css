@@ -83,7 +83,8 @@ body {
   scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
-.tabs button {
+.tabs button,
+.tabs a.tab-link {
   flex: 0 0 auto;
   background: transparent;
   color: var(--muted);
@@ -94,10 +95,15 @@ body {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
+  text-decoration: none;
+  display: inline-block;
 }
 .tabs button.active {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+.tabs a.tab-link:hover {
+  color: var(--text);
 }
 
 main {
@@ -796,3 +802,106 @@ body.wizard-modal-open { overflow: hidden; }
   max-height: 200px;
 }
 #chat-send { min-width: 70px; }
+
+/* =========================================================================
+   CHAT STANDALONE PAGE (/chat.html) — full-viewport, no Dovai chrome
+   ========================================================================= */
+body.chat-page {
+  margin: 0;
+  overflow: hidden;
+  height: 100vh;
+}
+.chat-page-root {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.chat-page-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--card-2);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.chat-page-sidebar-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+}
+.chat-page-brand {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.chat-page-sidebar-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.chat-page-sidebar-section.chat-page-sidebar-list-section {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-bottom: none;
+}
+.chat-page-sidebar-list-section .chat-list {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0 -14px -12px;
+  padding: 0 8px 12px;
+}
+.chat-page-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.chat-page-sidebar-section select {
+  width: 100%;
+  min-height: 40px;
+}
+
+.chat-page-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+.chat-page-topbar {
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card-2);
+}
+.chat-page-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+}
+
+/* Toast for flash() on chat.html (there's no Dovai top bar here) */
+.chat-flash {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  background: var(--accent-2);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 10000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Tighter sidebar chat list items for the standalone page */
+.chat-page-sidebar .chat-list-item { font-size: 13px; padding: 6px 8px; }
+.chat-page-sidebar .chat-list-group { padding: 6px 8px 3px; }
+
+/* Hide the in-app Chat tab artefacts if they still exist on main page */
+body:not(.chat-page) .chat-flash { display: none; }
